@@ -11,18 +11,46 @@ class ValueType(IntEnum):
 
     BOOL = 0x00
     UINT8 = 0x10
+    INT8 = 0x20
     UINT16 = 0x30
+    INT16 = 0x40
+    UINT32 = 0x50
+    INT32 = 0x60
+    UINT64 = 0x70
+    INT64 = 0x80
 
     @property
     def byte_width(self) -> int:
         """Return the encoded value width."""
-        return 2 if self is ValueType.UINT16 else 1
+        return {
+            ValueType.BOOL: 1,
+            ValueType.UINT8: 1,
+            ValueType.INT8: 1,
+            ValueType.UINT16: 2,
+            ValueType.INT16: 2,
+            ValueType.UINT32: 4,
+            ValueType.INT32: 4,
+            ValueType.UINT64: 8,
+            ValueType.INT64: 8,
+        }[self]
+
+    @property
+    def signed(self) -> bool:
+        """Return whether the integer wire type is signed."""
+        return self in {
+            ValueType.INT8,
+            ValueType.INT16,
+            ValueType.INT32,
+            ValueType.INT64,
+        }
 
 
 class EntityKind(StrEnum):
     """Home Assistant entity representation requested by a property."""
 
     SENSOR = "sensor"
+    BINARY_SENSOR = "binary_sensor"
+    NUMBER = "number"
     SWITCH = "switch"
     SELECT = "select"
 
@@ -43,6 +71,7 @@ class PropertySpec:
     maximum: int | None = None
     step: int | None = None
     unit: str | None = None
+    value_map: tuple[tuple[int, str], ...] = ()
 
     def __post_init__(self) -> None:
         """Validate profile metadata at import time."""
@@ -56,6 +85,12 @@ class PropertySpec:
             raise ValueError("Property minimum must not exceed maximum")
         if self.step is not None and self.step <= 0:
             raise ValueError("Property step must be positive")
+        values = [value for value, _ in self.value_map]
+        labels = [label for _, label in self.value_map]
+        if len(values) != len(set(values)) or len(labels) != len(set(labels)):
+            raise ValueError("Property value map must contain unique values and labels")
+        if any(not label for label in labels):
+            raise ValueError("Property value map labels must not be empty")
 
     @property
     def key(self) -> tuple[int, int]:
@@ -73,8 +108,10 @@ class PropertySpec:
                 raise TypeError(f"{self.name} requires an integer value")
             normalized = value
 
-        width_maximum = (1 << (8 * self.value_type.byte_width)) - 1
-        if not 0 <= normalized <= width_maximum:
+        bits = 8 * self.value_type.byte_width
+        width_minimum = -(1 << (bits - 1)) if self.value_type.signed else 0
+        width_maximum = (1 << (bits - 1)) - 1 if self.value_type.signed else (1 << bits) - 1
+        if not width_minimum <= normalized <= width_maximum:
             raise ValueError(f"{self.name} is outside its wire type range")
         if self.minimum is not None and normalized < self.minimum:
             raise ValueError(f"{self.name} is below its minimum")
@@ -86,6 +123,8 @@ class PropertySpec:
             and (normalized - self.minimum) % self.step
         ):
             raise ValueError(f"{self.name} does not match its configured step")
+        if self.value_map and normalized not in {item[0] for item in self.value_map}:
+            raise ValueError(f"{self.name} is not in its configured value map")
         return normalized
 
 

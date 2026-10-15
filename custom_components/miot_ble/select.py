@@ -31,6 +31,10 @@ class MiotBleSelect(MiotBleEntity, SelectEntity):
 
     def __init__(self, coordinator: MiotBleCoordinator, prop: PropertySpec) -> None:
         super().__init__(coordinator, prop)
+        if prop.value_map:
+            self._values = tuple(value for value, _ in prop.value_map)
+            self._attr_options = [label for _, label in prop.value_map]
+            return
         if prop.minimum is None or prop.maximum is None:
             raise ValueError("Select properties require minimum and maximum values")
         step = prop.step or 1

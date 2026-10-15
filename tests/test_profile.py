@@ -69,6 +69,45 @@ def test_property_rejects_wire_range_and_step_mismatch() -> None:
         stepped.validate_value(2)
 
 
+def test_signed_integer_and_value_map_validation() -> None:
+    signed = PropertySpec("offset", 1, 1, ValueType.INT8, EntityKind.NUMBER)
+    assert signed.validate_value(-128) == -128
+    with pytest.raises(ValueError, match="wire type"):
+        signed.validate_value(-129)
+
+    mode = PropertySpec(
+        "mode",
+        1,
+        2,
+        ValueType.UINT8,
+        EntityKind.SELECT,
+        value_map=((0, "Off"), (2, "Auto")),
+    )
+    assert mode.validate_value(2) == 2
+    with pytest.raises(ValueError, match="value map"):
+        mode.validate_value(1)
+
+
+@pytest.mark.parametrize(
+    "value_map",
+    [
+        ((1, "One"), (1, "Two")),
+        ((1, "Same"), (2, "Same")),
+        ((1, ""),),
+    ],
+)
+def test_property_rejects_invalid_value_map(value_map: tuple[tuple[int, str], ...]) -> None:
+    with pytest.raises(ValueError, match="value map"):
+        PropertySpec(
+            "mode",
+            1,
+            1,
+            ValueType.UINT8,
+            EntityKind.SELECT,
+            value_map=value_map,
+        )
+
+
 def test_device_profile_rejects_invalid_metadata() -> None:
     prop = PropertySpec("value", 1, 1, ValueType.UINT8, EntityKind.SENSOR)
     with pytest.raises(ValueError, match="identity"):

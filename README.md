@@ -11,6 +11,12 @@ device-specific behavior in the Bluetooth transport:
 - Declarative device profiles
 - Home Assistant entities generated from profile capabilities
 
+The shared profile engine can generate binary sensors, numbers, sensors,
+selects, and switches. It supports Boolean values, signed and unsigned
+8/16/32/64-bit integers, bounded numeric ranges, and non-contiguous MIoT value
+lists. Adding a device that follows the same transport therefore only requires
+a tested declarative profile rather than another integration implementation.
+
 ## Current status
 
 The protocol core, Xiaomi Standard Auth session, encrypted property transport,

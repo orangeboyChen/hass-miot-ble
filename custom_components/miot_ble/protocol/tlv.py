@@ -46,7 +46,7 @@ def _header(transaction_id: int, body: bytes) -> bytes:
 
 
 def _encode_value(value_type: ValueType, value: int) -> bytes:
-    return value.to_bytes(value_type.byte_width, "little")
+    return value.to_bytes(value_type.byte_width, "little", signed=value_type.signed)
 
 
 def build_set(transaction_id: int, prop: PropertySpec, value: int | bool) -> bytes:
@@ -91,7 +91,7 @@ def _decode_value(value_type_raw: int, raw: bytes) -> tuple[ValueType, int | boo
         raise ValueError(f"Unsupported MIoT value type: 0x{value_type_raw:02x}") from error
     if len(raw) != value_type.byte_width:
         raise ValueError("MIoT value length does not match its type")
-    value = int.from_bytes(raw, "little")
+    value = int.from_bytes(raw, "little", signed=value_type.signed)
     if value_type is ValueType.BOOL:
         if value not in (0, 1):
             raise ValueError("MIoT boolean value must be zero or one")

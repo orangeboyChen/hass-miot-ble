@@ -21,6 +21,16 @@ def test_build_set_supports_bool_and_uint16() -> None:
     assert build_set(2, uint16, 0x1234).hex() == "0d200200000101030002303412"
 
 
+def test_signed_and_wide_integer_values() -> None:
+    signed = PropertySpec("offset", 1, 2, ValueType.INT8, EntityKind.NUMBER, writable=True)
+    wide = PropertySpec("counter", 1, 3, ValueType.UINT32, EntityKind.NUMBER, writable=True)
+    assert build_set(1, signed, -2).hex() == "0c20010000010102000120fe"
+    assert build_set(2, wide, 0x12345678).hex() == "0f2002000001010300045078563412"
+
+    values = parse_properties(bytes.fromhex("0c20030004010102000120fe"))
+    assert values[0].value == -2
+
+
 def test_build_set_rejects_read_only_property() -> None:
     with pytest.raises(ValueError, match="not writable"):
         build_set(1, MUXNW_DRYER_M73.property(2, 4), 1)
