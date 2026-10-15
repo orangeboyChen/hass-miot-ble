@@ -142,10 +142,13 @@ def parse_properties(payload: bytes) -> tuple[PropertyValue, ...]:
             raise ValueError("MIoT snapshot contains trailing data")
         return tuple(values)
     if operation is Operation.NOTIFY:
-        if payload[5] != 1:
-            raise ValueError("MIoT notification must contain exactly one property")
-        value, offset = _parse_entry(payload, 6, snapshot=False)
+        expected_count = payload[5]
+        offset = 6
+        values: list[PropertyValue] = []
+        for _ in range(expected_count):
+            value, offset = _parse_entry(payload, offset, snapshot=False)
+            values.append(value)
         if offset != len(payload):
             raise ValueError("MIoT notification contains trailing data")
-        return (value,)
+        return tuple(values)
     raise ValueError(f"MIoT operation {operation.name} does not contain property values")

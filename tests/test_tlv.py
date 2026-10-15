@@ -65,6 +65,12 @@ def test_parse_notification() -> None:
     assert values[0].value == 1
 
 
+def test_parse_multi_property_notification() -> None:
+    payload = bytes.fromhex("1220b4000402020100011001020200011000")
+    values = parse_properties(payload)
+    assert [(value.key, value.value) for value in values] == [((2, 1), 1), ((2, 2), 0)]
+
+
 def test_parse_snapshot() -> None:
     payload = bytes.fromhex("1720b50003020201000000011001020200000002307856")
     values = parse_properties(payload)
@@ -79,7 +85,7 @@ def test_parse_snapshot() -> None:
         (bytes.fromhex("062101000400"), "header"),
         (bytes.fromhex("062001009900"), "operation"),
         (bytes.fromhex("062001000001"), "does not contain"),
-        (bytes.fromhex("07200100040200"), "exactly one"),
+        (bytes.fromhex("07200100040200"), "truncated"),
         (bytes.fromhex("0820010004010203"), "truncated"),
         (bytes.fromhex("0c2001000401020100021001"), "truncated"),
         (bytes.fromhex("0c2001000401020100019901"), "Unsupported"),

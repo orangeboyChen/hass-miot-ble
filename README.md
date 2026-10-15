@@ -84,11 +84,13 @@ cannot be reached, check Bluetooth range and make sure Mi Home is not holding an
 active connection. If authentication fails, restart setup so Home Assistant can
 refresh the device's local access data.
 
-Home Assistant reads the current properties when the connection opens and then
-refreshes them locally over BLE every 60 seconds. A successful property write is
-applied immediately after the device confirms the changed value. Unsolicited
-device notifications are reflected by the next scheduled refresh rather than
-pushed to Home Assistant immediately.
+Home Assistant reads and subscribes to the current properties when the
+connection opens. One background receiver continuously consumes encrypted
+notifications, so both confirmed writes and unsolicited device changes are
+pushed to Home Assistant immediately. A lightweight 60-second coordinator
+refresh checks connection health and reconnects and resubscribes when needed.
+The device generally accepts only one active controller, so close Mi Home while
+Home Assistant owns the BLE connection.
 
 If a device later rejects its Standard Auth token, Home Assistant starts a
 Xiaomi account reauthentication flow and retrieves a replacement automatically

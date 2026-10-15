@@ -8,6 +8,7 @@ import os
 import struct
 from collections import deque
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any, Protocol
 
 from ..const import UUID_AUTH, UUID_MIOT_NOTIFY, UUID_MIOT_WRITE, UUID_UPNP
@@ -124,11 +125,21 @@ class MiotBleSession:
         self._transaction_id = 0xB0
         self._tx_counter = -1
         self._command_lock = asyncio.Lock()
+        self._property_values: dict[tuple[int, int], PropertyValue] = {}
+        self._property_callback: Callable[[tuple[PropertyValue, ...]], None] | None = None
+        self._pending_responses: dict[int, asyncio.Future[tuple[PropertyValue, ...]]] = {}
+        self._receiver_task: asyncio.Task[None] | None = None
+        self._receiver_error: Exception | None = None
 
     @property
     def authenticated(self) -> bool:
         """Return whether Standard Auth completed successfully."""
         return self._keys is not None
+
+    @property
+    def property_values(self) -> dict[tuple[int, int], PropertyValue]:
+        """Return the latest property values received from the device."""
+        return dict(self._property_values)
 
     def _on_notify(self, sender: Any, data: bytearray) -> None:
         uuid = str(getattr(sender, "uuid", sender)).lower()
@@ -319,22 +330,132 @@ class MiotBleSession:
         self,
         properties: tuple[PropertySpec, ...],
     ) -> dict[tuple[int, int], PropertyValue]:
-        """Subscribe to properties one at a time and return their current values."""
+        """Subscribe to properties and return their initial values."""
+        if self._receiver_task is not None:
+            raise MiotBleError("The property receiver already owns the notification stream")
+        expected = {prop.key for prop in properties}
+        if not expected:
+            return {}
         result: dict[tuple[int, int], PropertyValue] = {}
         async with self._command_lock:
-            for prop in properties:
-                request = build_subscribe(self._next_transaction_id(), (prop,))
-                await self._send_request(request)
-                while prop.key not in result:
-                    response = await self._receive_encrypted()
-                    for value in parse_properties(response):
-                        result[value.key] = value
+            request = build_subscribe(self._next_transaction_id(), properties)
+            await self._send_request(request)
+            while not expected.issubset(result):
+                response = await self._receive_encrypted()
+                try:
+                    values = parse_properties(response)
+                except ValueError as error:
+                    _LOGGER.debug(
+                        "Ignoring MIoT payload while waiting for initial properties: %s (%s)",
+                        response.hex(),
+                        error,
+                    )
+                    continue
+                for value in values:
+                    result[value.key] = value
         return result
+
+    async def subscribe_properties(
+        self,
+        properties: tuple[PropertySpec, ...],
+        callback: Callable[[tuple[PropertyValue, ...]], None],
+    ) -> dict[tuple[int, int], PropertyValue]:
+        """Read initial values and continuously dispatch subsequent notifications."""
+        if self._receiver_task is not None:
+            raise MiotBleError("Property notification receiver is already running")
+        self._property_callback = callback
+        values = await self.read_properties(properties)
+        self._record_properties(tuple(values.values()))
+        self._receiver_error = None
+        self._receiver_task = asyncio.create_task(
+            self._receive_property_notifications(),
+            name="miot-ble-property-notifications",
+        )
+        return values
+
+    def _record_properties(self, values: tuple[PropertyValue, ...]) -> None:
+        """Store property values and notify the integration callback."""
+        if not values:
+            return
+        for value in values:
+            self._property_values[value.key] = value
+        if self._property_callback is not None:
+            try:
+                self._property_callback(values)
+            except Exception:
+                _LOGGER.exception("Xiaomi BLE property callback failed")
+
+    async def _receive_property_notifications(self) -> None:
+        """Continuously consume and dispatch encrypted property notifications."""
+        try:
+            while True:
+                try:
+                    payload = await self._receive_encrypted()
+                except ResponseTimeoutError:
+                    continue
+                try:
+                    values = parse_properties(payload)
+                except ValueError:
+                    _LOGGER.debug(
+                        "Ignoring Xiaomi BLE payload without property values: %s",
+                        payload.hex(),
+                    )
+                    continue
+                self._record_properties(values)
+                pending = self._pending_responses.get(payload[2])
+                if pending is not None and not pending.done():
+                    pending.set_result(values)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._receiver_error = error
+            _LOGGER.debug("Xiaomi BLE property receiver stopped: %s", error)
+
+    def raise_if_receiver_failed(self) -> None:
+        """Raise the error that stopped the background property receiver."""
+        if self._receiver_error is not None:
+            raise MiotBleError("Property notification receiver stopped") from self._receiver_error
+        if self._receiver_task is not None and self._receiver_task.done():
+            raise MiotBleError("Property notification receiver stopped")
+
+    def cancel_background_tasks(self) -> asyncio.Task[None] | None:
+        """Cancel notification processing and fail outstanding commands."""
+        task = self._receiver_task
+        self._receiver_task = None
+        self._property_callback = None
+        if task is not None:
+            task.cancel()
+        for pending in self._pending_responses.values():
+            if not pending.done():
+                pending.set_exception(ConnectionError("Bluetooth session closed"))
+        self._pending_responses.clear()
+        return task
+
+    async def async_close(self) -> None:
+        """Stop background notification processing."""
+        task = self.cancel_background_tasks()
+        if task is not None:
+            with suppress(asyncio.CancelledError):
+                await task
 
     async def set_property(self, prop: PropertySpec, value: int | bool) -> PropertyValue:
         """Write one property and wait for the device's change notification."""
         async with self._command_lock:
-            request = build_set(self._next_transaction_id(), prop, value)
+            self.raise_if_receiver_failed()
+            transaction_id = self._next_transaction_id()
+            request = build_set(transaction_id, prop, value)
+            if self._receiver_task is not None:
+                pending = asyncio.get_running_loop().create_future()
+                self._pending_responses[transaction_id] = pending
+                try:
+                    await self._send_request(request)
+                    changed_values = await asyncio.wait_for(pending, self._timeout)
+                finally:
+                    self._pending_responses.pop(transaction_id, None)
+                for changed in changed_values:
+                    if changed.key == prop.key:
+                        return changed
+                raise MiotBleError("Property write response omitted the changed property")
             await self._send_request(request)
             while True:
                 response = await self._receive_encrypted()

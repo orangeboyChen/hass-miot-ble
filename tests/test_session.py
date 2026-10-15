@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -260,6 +261,101 @@ async def test_read_and_set_properties_with_direct_notifications() -> None:
     changed = await session.set_property(power, 0)
     assert changed.value == 0
     assert [write[1] for write in client.writes].count(ACK_DATA) == 2
+
+
+@pytest.mark.asyncio
+async def test_subscribe_continuously_updates_property_cache() -> None:
+    client = FakeClient()
+    session = MiotBleSession(client, TOKEN, MUXNW_DRYER_M73)
+    session._keys = SessionKeys.derive(TOKEN, APP_RANDOM, DEVICE_RANDOM)
+    power = MUXNW_DRYER_M73.property(2, 1)
+    updates: list[tuple] = []
+    changed = asyncio.Event()
+
+    def callback(values: tuple) -> None:
+        updates.append(values)
+        if values[0].value == 0:
+            changed.set()
+
+    feed(session, UUID_MIOT_WRITE, RECEIVE_READY, RECEIVE_OK)
+    snapshot = bytes.fromhex("0e20b10003010201000000011001")
+    feed(session, UUID_MIOT_NOTIFY, direct_response(session._keys, 0, snapshot))
+    initial = await session.subscribe_properties((power,), callback)
+
+    notification = bytes.fromhex("0c2044000401020100011000")
+    feed(session, UUID_MIOT_NOTIFY, direct_response(session._keys, 1, notification))
+    await asyncio.wait_for(changed.wait(), 0.1)
+
+    assert initial[(2, 1)].value == 1
+    assert session.property_values[(2, 1)].value == 0
+    assert [values[0].value for values in updates] == [1, 0]
+    with pytest.raises(MiotBleError, match="already running"):
+        await session.subscribe_properties((power,), callback)
+    with pytest.raises(MiotBleError, match="already owns"):
+        await session.read_properties((power,))
+    await session.async_close()
+
+
+@pytest.mark.asyncio
+async def test_background_receiver_routes_set_response_by_transaction_id() -> None:
+    client = FakeClient()
+    session = MiotBleSession(client, TOKEN, MUXNW_DRYER_M73)
+    session._keys = SessionKeys.derive(TOKEN, APP_RANDOM, DEVICE_RANDOM)
+    power = MUXNW_DRYER_M73.property(2, 1)
+
+    feed(session, UUID_MIOT_WRITE, RECEIVE_READY, RECEIVE_OK)
+    snapshot = bytes.fromhex("0e20b10003010201000000011001")
+    feed(session, UUID_MIOT_NOTIFY, direct_response(session._keys, 0, snapshot))
+    await session.subscribe_properties((power,), lambda values: None)
+
+    feed(session, UUID_MIOT_WRITE, RECEIVE_READY, RECEIVE_OK)
+    setter = asyncio.create_task(session.set_property(power, 0))
+    await asyncio.sleep(0)
+    notification = bytes.fromhex("0c20b2000401020100011000")
+    feed(session, UUID_MIOT_NOTIFY, direct_response(session._keys, 1, notification))
+
+    assert (await setter).value == 0
+    assert session.property_values[(2, 1)].value == 0
+    await session.async_close()
+
+
+@pytest.mark.asyncio
+async def test_receiver_ignores_non_property_payload_and_reports_failure() -> None:
+    session = MiotBleSession(FakeClient(), TOKEN, MUXNW_DRYER_M73)
+    session._keys = SessionKeys.derive(TOKEN, APP_RANDOM, DEVICE_RANDOM)
+    session._receive_encrypted = AsyncMock(
+        side_effect=[bytes((5, 0x20, 1, 0, 0xF0)), RuntimeError("receiver failed")]
+    )
+    session._receiver_task = asyncio.create_task(session._receive_property_notifications())
+    await session._receiver_task
+
+    with pytest.raises(MiotBleError, match="receiver stopped") as raised:
+        session.raise_if_receiver_failed()
+    assert isinstance(raised.value.__cause__, RuntimeError)
+    await session.async_close()
+
+
+@pytest.mark.asyncio
+async def test_read_properties_subscribes_to_a_batch_once() -> None:
+    client = FakeClient()
+    session = MiotBleSession(client, TOKEN, MUXNW_DRYER_M73)
+    session._keys = SessionKeys.derive(TOKEN, APP_RANDOM, DEVICE_RANDOM)
+    power = MUXNW_DRYER_M73.property(2, 1)
+    uv = MUXNW_DRYER_M73.property(2, 2)
+
+    feed(session, UUID_MIOT_WRITE, RECEIVE_READY, RECEIVE_OK)
+    snapshot = bytes.fromhex("1620b100030202010000000110010202000000011000")
+    feed(session, UUID_MIOT_NOTIFY, direct_response(session._keys, 0, snapshot))
+
+    values = await session.read_properties((power, uv))
+
+    assert {key: value.value for key, value in values.items()} == {(2, 1): 1, (2, 2): 0}
+    headers = [
+        data
+        for uuid, data, _ in client.writes
+        if uuid == UUID_MIOT_WRITE and data.startswith(bytes(4))
+    ]
+    assert headers == [bytes.fromhex("000000000100")]
 
 
 @pytest.mark.asyncio

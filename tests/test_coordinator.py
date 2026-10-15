@@ -39,7 +39,7 @@ async def test_update_and_set_property(hass) -> None:
     coordinator = make_coordinator(hass)
     power = MUXNW_DRYER_M73.property(2, 1)
     session = SimpleNamespace(
-        read_properties=AsyncMock(return_value={(2, 1): PropertyValue(2, 1, ValueType.UINT8, 1)}),
+        property_values={(2, 1): PropertyValue(2, 1, ValueType.UINT8, 1)},
         set_property=AsyncMock(return_value=PropertyValue(2, 1, ValueType.UINT8, 0)),
     )
     coordinator._ensure_session = AsyncMock(return_value=session)
@@ -62,6 +62,19 @@ async def test_update_failure_drops_connection(hass) -> None:
 
 
 @pytest.mark.asyncio
+async def test_set_failure_drops_connection(hass) -> None:
+    coordinator = make_coordinator(hass)
+    power = MUXNW_DRYER_M73.property(2, 1)
+    coordinator._ensure_session = AsyncMock(side_effect=ConnectionError("offline"))
+    coordinator._drop_connection = AsyncMock()
+
+    with pytest.raises(ConnectionError, match="offline"):
+        await coordinator.async_set_property(power, 1)
+
+    coordinator._drop_connection.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_authentication_failure_requests_reauth(hass) -> None:
     coordinator = make_coordinator(hass)
     coordinator._ensure_session = AsyncMock(side_effect=AuthenticationError("bad token"))
@@ -74,17 +87,23 @@ async def test_authentication_failure_requests_reauth(hass) -> None:
 @pytest.mark.asyncio
 async def test_ensure_session_reuses_connection(hass) -> None:
     coordinator = make_coordinator(hass)
-    existing = MagicMock()
+    existing = SimpleNamespace(raise_if_receiver_failed=MagicMock())
     coordinator._session = existing
     coordinator._client = SimpleNamespace(is_connected=True)
     assert await coordinator._ensure_session() is existing
+    existing.raise_if_receiver_failed.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_ensure_session_connects_and_authenticates(hass) -> None:
     coordinator = make_coordinator(hass)
     client = SimpleNamespace(is_connected=True, disconnect=AsyncMock())
-    session = SimpleNamespace(start=AsyncMock(), login=AsyncMock())
+    session = SimpleNamespace(
+        start=AsyncMock(),
+        login=AsyncMock(),
+        subscribe_properties=AsyncMock(),
+        async_close=AsyncMock(),
+    )
     with (
         patch(
             "custom_components.miot_ble.coordinator.async_ble_device_from_address",
@@ -103,6 +122,7 @@ async def test_ensure_session_connects_and_authenticates(hass) -> None:
     assert coordinator._client is client
     session.start.assert_awaited_once()
     session.login.assert_awaited_once()
+    session.subscribe_properties.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -118,7 +138,11 @@ async def test_ensure_session_handles_offline_and_login_failure(hass) -> None:
         await coordinator._ensure_session()
 
     client = SimpleNamespace(is_connected=True, disconnect=AsyncMock())
-    session = SimpleNamespace(start=AsyncMock(), login=AsyncMock(side_effect=RuntimeError("bad")))
+    session = SimpleNamespace(
+        start=AsyncMock(),
+        login=AsyncMock(side_effect=RuntimeError("bad")),
+        async_close=AsyncMock(),
+    )
     with (
         patch(
             "custom_components.miot_ble.coordinator.async_ble_device_from_address",
@@ -135,6 +159,7 @@ async def test_ensure_session_handles_offline_and_login_failure(hass) -> None:
         pytest.raises(RuntimeError, match="bad"),
     ):
         await coordinator._ensure_session()
+    session.async_close.assert_awaited_once()
     client.disconnect.assert_awaited_once()
 
 
@@ -142,19 +167,43 @@ async def test_ensure_session_handles_offline_and_login_failure(hass) -> None:
 async def test_disconnect_drop_and_shutdown(hass) -> None:
     coordinator = make_coordinator(hass)
     client = SimpleNamespace(is_connected=True, disconnect=AsyncMock())
+    session = SimpleNamespace(cancel_background_tasks=MagicMock(), async_close=AsyncMock())
+    coordinator.async_refresh = AsyncMock()
     coordinator._client = client
-    coordinator._session = MagicMock()
+    coordinator._session = session
     coordinator._disconnected(MagicMock())
     assert coordinator._client is client
     coordinator._disconnected(client)
     assert coordinator._client is None
+    session.cancel_background_tasks.assert_called_once()
+    await hass.async_block_till_done()
+    coordinator.async_refresh.assert_awaited_once()
 
     coordinator._client = client
-    coordinator._session = MagicMock()
+    coordinator._session = session
     await coordinator._drop_connection()
+    session.async_close.assert_awaited_once()
     client.disconnect.assert_awaited_once()
     assert coordinator._session is None
 
     coordinator._drop_connection = AsyncMock()
     await coordinator.async_shutdown()
     coordinator._drop_connection.assert_awaited_once()
+
+
+def test_property_notifications_update_only_active_session(hass) -> None:
+    coordinator = make_coordinator(hass)
+    active_session = MagicMock()
+    coordinator._session = active_session
+
+    coordinator._handle_property_values(
+        active_session,
+        (PropertyValue(2, 1, ValueType.UINT8, 1),),
+    )
+    assert coordinator.data == {(2, 1): 1}
+
+    coordinator._handle_property_values(
+        MagicMock(),
+        (PropertyValue(2, 1, ValueType.UINT8, 0),),
+    )
+    assert coordinator.data == {(2, 1): 1}
