@@ -4,17 +4,15 @@
     "step": {
       "user": {
         "title": "添加小米 MIoT 蓝牙设备",
-        "description": "选择附近的设备。可以手动输入 12 字节蓝牙 token，或留空以复用本地密钥或从小米云获取。",
+        "description": "选择附近的受支持设备，Home Assistant 将自动准备本地蓝牙访问。",
         "data": {
           "address": "蓝牙设备",
-          "model": "型号",
-          "token": "蓝牙 token",
           "name": "名称"
         }
       },
       "cloud_auth": {
-        "title": "从小米云获取蓝牙密钥",
-        "description": "登录以获取 {name} 的蓝牙密钥。账号密码仅用于本次请求，不会保存在 Home Assistant 中。",
+        "title": "连接小米账号",
+        "description": "登录以为 {name} 准备本地蓝牙访问。账号密码仅在配置过程中使用，不会保存在 Home Assistant 中。",
         "data": {
           "username": "小米账号",
           "password": "密码"
@@ -22,40 +20,33 @@
       },
       "cloud_captcha": {
         "title": "完成小米云验证码",
-        "description": "输入下图中的字符，以继续获取 {name} 的蓝牙密钥。\n\n![小米验证码]({captcha_image})",
+        "description": "输入下图中的字符，以继续配置 {name}。\n\n![小米验证码]({captcha_image})",
         "data": {
           "captcha": "验证码"
         }
       },
       "cloud_verify": {
         "title": "完成小米账号验证",
-        "description": "[打开小米验证页面]({verification_url})，完成手机或邮箱验证，然后输入验证票据以继续获取 {name} 的蓝牙密钥。",
+        "description": "[打开小米验证页面]({verification_url})，完成手机或邮箱验证，然后输入验证票据以继续配置 {name}。",
         "data": {
           "verification_ticket": "验证票据"
-        }
-      },
-      "reauth_confirm": {
-        "title": "更新蓝牙 token",
-        "description": "为 {name} 输入新的 12 字节蓝牙 token。",
-        "data": {
-          "token": "蓝牙 token"
         }
       }
     },
     "error": {
       "cannot_connect": "无法连接设备",
-      "invalid_auth": "设备拒绝了该 token",
-      "invalid_token": "token 必须是 24 位十六进制字符",
+      "invalid_auth": "设备拒绝了本地访问密钥",
       "cloud_invalid_auth": "小米云拒绝了该账号或密码",
       "cloud_invalid_captcha": "小米云拒绝了验证码，请根据刷新后的图片重试",
       "cloud_invalid_verification": "小米云拒绝了验证票据",
       "cloud_device_not_found": "该小米账号中没有找到此蓝牙设备",
       "cloud_error": "无法查询小米云",
-      "cloud_key_unsupported": "小米云返回的密钥不是 12 字节蓝牙 token"
+      "cloud_key_unsupported": "小米云返回了不受支持的本地访问密钥"
     },
     "abort": {
       "already_configured": "该设备已经配置",
       "not_supported": "发现的蓝牙设备不受支持",
+      "no_supported_devices": "附近没有发现受支持的蓝牙设备",
       "missing_setup_data": "设备配置信息已失效，请重新开始添加流程",
       "missing_cloud_challenge": "小米云验证已失效，请重新开始添加流程"
     }

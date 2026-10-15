@@ -3,7 +3,12 @@
 import pytest
 
 from custom_components.miot_ble.profile import DeviceProfile, EntityKind, PropertySpec, ValueType
-from custom_components.miot_ble.profiles import MUXNW_DRYER_M73, get_profile, iter_profiles
+from custom_components.miot_ble.profiles import (
+    MUXNW_DRYER_M73,
+    get_profile,
+    iter_profiles,
+    profile_for_product_id,
+)
 
 
 def test_m73_profile_matches_plugin_bundle() -> None:
@@ -21,6 +26,11 @@ def test_unknown_profile_and_property_are_rejected() -> None:
         get_profile("missing.model")
     with pytest.raises(KeyError, match="9/9"):
         MUXNW_DRYER_M73.property(9, 9)
+
+
+def test_product_id_matches_only_supported_profiles() -> None:
+    assert profile_for_product_id(0x5A5B) is MUXNW_DRYER_M73
+    assert profile_for_product_id(0x0000) is None
 
 
 def test_property_validates_values() -> None:

@@ -4,17 +4,15 @@
     "step": {
       "user": {
         "title": "Add a Xiaomi MIoT BLE device",
-        "description": "Select a nearby device. Enter a 12-byte BLE token manually, or leave it empty to reuse a locally stored key or retrieve it from Xiaomi Cloud.",
+        "description": "Select a supported nearby device. Home Assistant will prepare local Bluetooth access automatically.",
         "data": {
           "address": "Bluetooth device",
-          "model": "Model",
-          "token": "BLE token",
           "name": "Name"
         }
       },
       "cloud_auth": {
-        "title": "Retrieve the BLE key from Xiaomi Cloud",
-        "description": "Sign in to retrieve the BLE key for {name}. The credentials are used only for this request and are not stored in Home Assistant.",
+        "title": "Connect your Xiaomi account",
+        "description": "Sign in to prepare local Bluetooth access for {name}. The credentials are used only during setup and are not stored in Home Assistant.",
         "data": {
           "username": "Xiaomi account",
           "password": "Password"
@@ -22,40 +20,33 @@
       },
       "cloud_captcha": {
         "title": "Complete Xiaomi Cloud captcha",
-        "description": "Enter the text shown below to continue retrieving the BLE key for {name}.\n\n![Xiaomi captcha]({captcha_image})",
+        "description": "Enter the text shown below to continue setting up {name}.\n\n![Xiaomi captcha]({captcha_image})",
         "data": {
           "captcha": "Captcha"
         }
       },
       "cloud_verify": {
         "title": "Complete Xiaomi account verification",
-        "description": "[Open the Xiaomi verification page]({verification_url}), complete the phone or email check, then enter the verification ticket to continue retrieving the BLE key for {name}.",
+        "description": "[Open the Xiaomi verification page]({verification_url}), complete the phone or email check, then enter the verification ticket to continue setting up {name}.",
         "data": {
           "verification_ticket": "Verification ticket"
-        }
-      },
-      "reauth_confirm": {
-        "title": "Update the BLE token",
-        "description": "Enter a new 12-byte BLE token for {name}.",
-        "data": {
-          "token": "BLE token"
         }
       }
     },
     "error": {
       "cannot_connect": "Unable to connect to the device",
-      "invalid_auth": "The device rejected the token",
-      "invalid_token": "The token must contain 24 hexadecimal characters",
+      "invalid_auth": "The device rejected the local access key",
       "cloud_invalid_auth": "Xiaomi Cloud rejected the account credentials",
       "cloud_invalid_captcha": "Xiaomi Cloud rejected the captcha; try the refreshed image",
       "cloud_invalid_verification": "Xiaomi Cloud rejected the verification ticket",
       "cloud_device_not_found": "The Bluetooth device was not found in this Xiaomi account",
       "cloud_error": "Unable to query Xiaomi Cloud",
-      "cloud_key_unsupported": "Xiaomi Cloud returned a key that is not a 12-byte BLE token"
+      "cloud_key_unsupported": "Xiaomi Cloud returned an unsupported local access key"
     },
     "abort": {
       "already_configured": "This device is already configured",
       "not_supported": "The discovered Bluetooth device is not supported",
+      "no_supported_devices": "No supported nearby Bluetooth devices were found",
       "missing_setup_data": "Device setup information expired; start the flow again",
       "missing_cloud_challenge": "Xiaomi Cloud verification expired; start the flow again"
     }

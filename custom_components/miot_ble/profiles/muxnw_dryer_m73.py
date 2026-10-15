@@ -1,10 +1,10 @@
-"""Device profile for the Muxin M73 clothes dryer."""
+"""Device profile for the Muxiang M73 shoe dryer."""
 
 from ..profile import DeviceProfile, EntityKind, PropertySpec, ValueType
 
 PROFILE = DeviceProfile(
     model="muxnw.dryer.m73",
-    name="Muxin M73 Clothes Dryer",
+    name="Muxiang M73 Shoe Dryer",
     spec_type="urn:miot-spec-v2:device:clothes-dryer:0000A06D:muxnw-m73:1",
     auth_type=4,
     properties=(

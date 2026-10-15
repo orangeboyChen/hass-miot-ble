@@ -12,7 +12,7 @@ import voluptuous as vol
 from bleak import BleakClient
 from bleak_retry_connector import establish_connection
 from home_assistant_bluetooth import BluetoothServiceInfoBleak
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_ADDRESS, CONF_MODEL, CONF_NAME, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
@@ -29,7 +29,8 @@ from .cloud import (
     XiaomiCloudVerificationRequiredError,
 )
 from .const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
-from .profiles import get_profile, iter_profiles
+from .profile import DeviceProfile
+from .profiles import get_profile, profile_for_product_id
 from .protocol import AuthenticationError, MiotBleSession
 
 _LOGGER = logging.getLogger(__name__)
@@ -78,15 +79,21 @@ def find_existing_token(hass: Any, address: str) -> str | None:
     return None
 
 
-def _supports_miot_service(info: BluetoothServiceInfoBleak) -> bool:
-    return UUID_MI_SERVICE in info.service_uuids or UUID_MI_SERVICE in info.service_data
+def _profile_for_discovery(info: BluetoothServiceInfoBleak) -> DeviceProfile | None:
+    """Return a profile only for a supported Xiaomi Bluetooth advertisement."""
+    service_data = info.service_data.get(UUID_MI_SERVICE)
+    if service_data is None or len(service_data) < 4:
+        return None
+    product_id = int.from_bytes(service_data[2:4], byteorder="little")
+    return profile_for_product_id(product_id)
 
 
-def _discovered_devices(hass: Any) -> dict[str, str]:
-    devices: dict[str, str] = {}
+def _discovered_devices(hass: Any) -> dict[str, tuple[str, DeviceProfile]]:
+    """Return only nearby devices with an implemented profile."""
+    devices: dict[str, tuple[str, DeviceProfile]] = {}
     for info in async_discovered_service_info(hass):
-        if _supports_miot_service(info):
-            devices[info.address] = info.name or info.address
+        if profile := _profile_for_discovery(info):
+            devices[info.address] = (info.name or profile.name, profile)
     return devices
 
 
@@ -137,6 +144,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._discovered_address: str | None = None
         self._discovered_name: str | None = None
+        self._discovered_profile: DeviceProfile | None = None
         self._pending_setup: dict[str, str] | None = None
         self._cloud_client: XiaomiCloudClient | None = None
 
@@ -145,68 +153,62 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:
         """Handle a connectable FE95 Bluetooth discovery."""
-        if not _supports_miot_service(discovery_info):
+        profile = _profile_for_discovery(discovery_info)
+        if profile is None:
             return self.async_abort(reason="not_supported")
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
         self._discovered_address = discovery_info.address
         self._discovered_name = discovery_info.name or discovery_info.address
+        self._discovered_profile = profile
         self.context["title_placeholders"] = {"name": self._discovered_name}
         return await self.async_step_user()
 
     @override
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Collect the model, address, and bound-device token."""
+        """Select a supported nearby device and prepare local access."""
         errors: dict[str, str] = {}
+        devices = _discovered_devices(self.hass)
+        if self._discovered_address and self._discovered_profile:
+            devices.setdefault(
+                self._discovered_address,
+                (
+                    self._discovered_name or self._discovered_profile.name,
+                    self._discovered_profile,
+                ),
+            )
+        if not devices:
+            return self.async_abort(reason="no_supported_devices")
         if user_input is not None:
             address = str(user_input[CONF_ADDRESS]).strip()
-            model = str(user_input[CONF_MODEL])
-            profile = get_profile(model)
+            _, profile = devices[address]
             name = str(user_input.get(CONF_NAME) or self._discovered_name or profile.name)
             self._pending_setup = {
                 CONF_ADDRESS: address,
-                CONF_MODEL: model,
+                CONF_MODEL: profile.model,
                 CONF_NAME: name,
             }
-            supplied_token = str(user_input.get(CONF_TOKEN, ""))
-            try:
-                token = (
-                    normalize_token(supplied_token)
-                    if supplied_token.strip()
-                    else find_existing_token(self.hass, address)
-                )
-            except ValueError:
-                errors[CONF_TOKEN] = "invalid_token"
+            token = find_existing_token(self.hass, address)
+            await self.async_set_unique_id(address, raise_on_progress=False)
+            self._abort_if_unique_id_configured()
+            if token is None:
+                return await self.async_step_cloud_auth()
             else:
-                await self.async_set_unique_id(address, raise_on_progress=False)
-                self._abort_if_unique_id_configured()
-                if token is None:
-                    return await self.async_step_cloud_auth()
-                else:
-                    result, error = await self._async_finish_setup(token)
-                    if result is not None:
-                        return result
-                    errors["base"] = error
+                result, error = await self._async_finish_setup(token)
+                if result is not None:
+                    return result
+                errors["base"] = error
 
         values = user_input or {}
-        devices = _discovered_devices(self.hass)
-        if self._discovered_address:
-            devices.setdefault(
-                self._discovered_address,
-                self._discovered_name or self._discovered_address,
-            )
         address_default = self._discovered_address or values.get(CONF_ADDRESS, "")
-        address_validator: Any = vol.In(devices) if devices else cv.string
-        models = {profile.model: profile.name for profile in iter_profiles()}
-        model_default = values.get(CONF_MODEL, next(iter(models)))
         name_default = values.get(CONF_NAME, self._discovered_name or "")
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_ADDRESS, default=address_default): address_validator,
-                    vol.Required(CONF_MODEL, default=model_default): vol.In(models),
-                    vol.Optional(CONF_TOKEN, default=values.get(CONF_TOKEN, "")): cv.string,
+                    vol.Required(CONF_ADDRESS, default=address_default): vol.In(
+                        {address: details[0] for address, details in devices.items()}
+                    ),
                     vol.Optional(CONF_NAME, default=name_default): cv.string,
                 }
             ),
@@ -401,50 +403,26 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.debug("Unable to connect to %s: %s", address, error)
             return None, "cannot_connect"
         return (
-            self.async_create_entry(
-                title=self._pending_setup[CONF_NAME],
-                data={**self._pending_setup, CONF_TOKEN: token},
+            (
+                self.async_update_reload_and_abort(
+                    self._get_reauth_entry(),
+                    data_updates={CONF_TOKEN: token},
+                )
+                if self.context.get("source") == SOURCE_REAUTH
+                else self.async_create_entry(
+                    title=self._pending_setup[CONF_NAME],
+                    data={**self._pending_setup, CONF_TOKEN: token},
+                )
             ),
             "",
         )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
-        """Start token replacement for an existing device."""
-        return await self.async_step_reauth_confirm()
-
-    async def async_step_reauth_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Validate and save a replacement bound-device token."""
+        """Retrieve and validate a replacement device key from Xiaomi Cloud."""
         entry = self._get_reauth_entry()
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            try:
-                token = normalize_token(str(user_input[CONF_TOKEN]))
-            except ValueError:
-                errors[CONF_TOKEN] = "invalid_token"
-            else:
-                try:
-                    await async_validate_connection(
-                        self.hass,
-                        entry.data[CONF_ADDRESS],
-                        bytes.fromhex(token),
-                        entry.data[CONF_MODEL],
-                    )
-                except AuthenticationError:
-                    errors["base"] = "invalid_auth"
-                except Exception as error:
-                    _LOGGER.debug("Unable to validate replacement token: %s", error)
-                    errors["base"] = "cannot_connect"
-                else:
-                    return self.async_update_reload_and_abort(
-                        entry,
-                        data_updates={CONF_TOKEN: token},
-                    )
-
-        return self.async_show_form(
-            step_id="reauth_confirm",
-            data_schema=vol.Schema({vol.Required(CONF_TOKEN): cv.string}),
-            errors=errors,
-            description_placeholders={"name": entry.title},
-        )
+        self._pending_setup = {
+            CONF_ADDRESS: str(entry.data[CONF_ADDRESS]),
+            CONF_MODEL: str(entry.data[CONF_MODEL]),
+            CONF_NAME: str(entry.data.get(CONF_NAME) or entry.title),
+        }
+        return await self.async_step_cloud_auth()

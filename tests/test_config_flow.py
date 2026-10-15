@@ -21,13 +21,14 @@ from custom_components.miot_ble.config_flow import (
     CloudDeviceNotFoundError,
     MiotBleConfigFlow,
     _discovered_devices,
-    _supports_miot_service,
+    _profile_for_discovery,
     async_fetch_cloud_token,
     async_validate_connection,
     find_existing_token,
     normalize_token,
 )
 from custom_components.miot_ble.const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
+from custom_components.miot_ble.profiles import MUXNW_DRYER_M73
 from custom_components.miot_ble.protocol import AuthenticationError
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
@@ -35,13 +36,22 @@ TOKEN = "00112233445566778899aabb"
 MODEL = "muxnw.dryer.m73"
 
 
-def discovery_info(*, supported: bool = True, name: str | None = "M73") -> SimpleNamespace:
+def discovery_info(
+    *,
+    address: str = ADDRESS,
+    product_id: int | None = 0x5A5B,
+    name: str | None = "M73",
+) -> SimpleNamespace:
     """Build the discovery fields used by the config flow."""
     return SimpleNamespace(
-        address=ADDRESS,
+        address=address,
         name=name,
-        service_uuids=[UUID_MI_SERVICE] if supported else [],
-        service_data={},
+        service_uuids=[UUID_MI_SERVICE],
+        service_data=(
+            {UUID_MI_SERVICE: b"\x00\x20" + product_id.to_bytes(2, "little") + b"\x00"}
+            if product_id is not None
+            else {}
+        ),
     )
 
 
@@ -53,6 +63,11 @@ def config_flow(hass, source: str) -> MiotBleConfigFlow:
     return flow
 
 
+def supported_devices() -> dict[str, tuple[str, object]]:
+    """Return the supported discovery mapping used by config-flow tests."""
+    return {ADDRESS: ("M73", MUXNW_DRYER_M73)}
+
+
 def test_normalize_token() -> None:
     assert normalize_token(f"  {TOKEN.upper()}  ") == TOKEN
     for invalid in ("", "0011", "g" * 24):
@@ -60,18 +75,28 @@ def test_normalize_token() -> None:
             normalize_token(invalid)
 
 
-def test_service_detection_and_discovery_list() -> None:
-    assert _supports_miot_service(discovery_info())
-    service_data_info = discovery_info(supported=False)
-    service_data_info.service_data = {UUID_MI_SERVICE: b"data"}
-    assert _supports_miot_service(service_data_info)
-    assert not _supports_miot_service(discovery_info(supported=False))
-
+def test_discovery_uses_product_id_and_hides_unsupported_devices() -> None:
+    supported = discovery_info(name="Unexpected name")
+    unsupported = discovery_info(
+        address="11:22:33:44:55:66",
+        product_id=0x0001,
+        name="M73",
+    )
+    missing_data = discovery_info(
+        address="22:33:44:55:66:77",
+        product_id=None,
+    )
+    malformed = discovery_info(address="33:44:55:66:77:88")
+    malformed.service_data = {UUID_MI_SERVICE: b"\x00\x20\x5b"}
+    assert _profile_for_discovery(supported) is MUXNW_DRYER_M73
+    assert _profile_for_discovery(unsupported) is None
+    assert _profile_for_discovery(missing_data) is None
+    assert _profile_for_discovery(malformed) is None
     with patch(
         "custom_components.miot_ble.config_flow.async_discovered_service_info",
-        return_value=[discovery_info(), discovery_info(supported=False)],
+        return_value=[supported, unsupported, missing_data, malformed],
     ):
-        assert _discovered_devices(MagicMock()) == {ADDRESS: "M73"}
+        assert _discovered_devices(MagicMock()) == {ADDRESS: ("Unexpected name", MUXNW_DRYER_M73)}
 
 
 def test_find_existing_token(hass) -> None:
@@ -94,10 +119,17 @@ def test_find_existing_token(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_user_flow_success(hass) -> None:
+async def test_user_flow_reuses_automatic_local_key(hass) -> None:
     flow = config_flow(hass, SOURCE_USER)
     with (
-        patch("custom_components.miot_ble.config_flow._discovered_devices", return_value={}),
+        patch(
+            "custom_components.miot_ble.config_flow._discovered_devices",
+            return_value=supported_devices(),
+        ),
+        patch(
+            "custom_components.miot_ble.config_flow.find_existing_token",
+            return_value=TOKEN,
+        ),
         patch(
             "custom_components.miot_ble.config_flow.async_validate_connection",
             new=AsyncMock(),
@@ -105,11 +137,11 @@ async def test_user_flow_success(hass) -> None:
     ):
         result = await flow.async_step_user()
         assert result["type"] is FlowResultType.FORM
+        fields = {key.schema for key in result["data_schema"].schema}
+        assert fields == {CONF_ADDRESS, CONF_NAME}
         result = await flow.async_step_user(
             {
                 CONF_ADDRESS: ADDRESS,
-                CONF_MODEL: MODEL,
-                CONF_TOKEN: TOKEN.upper(),
                 CONF_NAME: "Dryer",
             },
         )
@@ -135,7 +167,14 @@ async def test_user_flow_connection_errors(
 ) -> None:
     flow = config_flow(hass, SOURCE_USER)
     with (
-        patch("custom_components.miot_ble.config_flow._discovered_devices", return_value={}),
+        patch(
+            "custom_components.miot_ble.config_flow._discovered_devices",
+            return_value=supported_devices(),
+        ),
+        patch(
+            "custom_components.miot_ble.config_flow.find_existing_token",
+            return_value=TOKEN,
+        ),
         patch(
             "custom_components.miot_ble.config_flow.async_validate_connection",
             new=AsyncMock(side_effect=validation_error),
@@ -144,8 +183,6 @@ async def test_user_flow_connection_errors(
         result = await flow.async_step_user(
             {
                 CONF_ADDRESS: ADDRESS,
-                CONF_MODEL: MODEL,
-                CONF_TOKEN: TOKEN,
                 CONF_NAME: "Dryer",
             },
         )
@@ -154,24 +191,12 @@ async def test_user_flow_connection_errors(
 
 
 @pytest.mark.asyncio
-async def test_user_flow_rejects_invalid_token(hass) -> None:
+async def test_user_flow_aborts_without_supported_devices(hass) -> None:
     flow = config_flow(hass, SOURCE_USER)
-    validate = AsyncMock()
-    with (
-        patch("custom_components.miot_ble.config_flow._discovered_devices", return_value={}),
-        patch("custom_components.miot_ble.config_flow.async_validate_connection", validate),
-    ):
-        result = await flow.async_step_user(
-            {
-                CONF_ADDRESS: ADDRESS,
-                CONF_MODEL: MODEL,
-                CONF_TOKEN: "invalid",
-                CONF_NAME: "",
-            },
-        )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"][CONF_TOKEN] == "invalid_token"
-    validate.assert_not_awaited()
+    with patch("custom_components.miot_ble.config_flow._discovered_devices", return_value={}):
+        result = await flow.async_step_user()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_supported_devices"
 
 
 @pytest.mark.asyncio
@@ -185,14 +210,15 @@ async def test_user_flow_reuses_xiaomi_ble_bindkey(hass) -> None:
     flow = config_flow(hass, SOURCE_USER)
     validate = AsyncMock()
     with (
-        patch("custom_components.miot_ble.config_flow._discovered_devices", return_value={}),
+        patch(
+            "custom_components.miot_ble.config_flow._discovered_devices",
+            return_value=supported_devices(),
+        ),
         patch("custom_components.miot_ble.config_flow.async_validate_connection", validate),
     ):
         result = await flow.async_step_user(
             {
                 CONF_ADDRESS: ADDRESS,
-                CONF_MODEL: MODEL,
-                CONF_TOKEN: "",
                 CONF_NAME: "Dryer",
             }
         )
@@ -206,14 +232,15 @@ async def test_user_flow_routes_missing_token_to_cloud(hass) -> None:
     flow = config_flow(hass, SOURCE_USER)
     validate = AsyncMock()
     with (
-        patch("custom_components.miot_ble.config_flow._discovered_devices", return_value={}),
+        patch(
+            "custom_components.miot_ble.config_flow._discovered_devices",
+            return_value=supported_devices(),
+        ),
         patch("custom_components.miot_ble.config_flow.async_validate_connection", validate),
     ):
         result = await flow.async_step_user(
             {
                 CONF_ADDRESS: ADDRESS,
-                CONF_MODEL: MODEL,
-                CONF_TOKEN: "",
                 CONF_NAME: "Dryer",
             }
         )
@@ -225,14 +252,11 @@ async def test_user_flow_routes_missing_token_to_cloud(hass) -> None:
 @pytest.mark.asyncio
 async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> None:
     flow = config_flow(hass, SOURCE_USER)
-    result = await flow.async_step_user(
-        {
-            CONF_ADDRESS: ADDRESS,
-            CONF_MODEL: MODEL,
-            CONF_TOKEN: "",
-            CONF_NAME: "Dryer",
-        }
-    )
+    with patch(
+        "custom_components.miot_ble.config_flow._discovered_devices",
+        return_value=supported_devices(),
+    ):
+        result = await flow.async_step_user({CONF_ADDRESS: ADDRESS, CONF_NAME: "Dryer"})
     assert result["step_id"] == "cloud_auth"
 
     client = SimpleNamespace(
@@ -469,7 +493,7 @@ async def test_bluetooth_flow_prefills_discovered_device(hass) -> None:
     info = discovery_info()
     with patch(
         "custom_components.miot_ble.config_flow._discovered_devices",
-        return_value={ADDRESS: "M73"},
+        return_value=supported_devices(),
     ):
         result = await flow.async_step_bluetooth(info)
     assert result["type"] is FlowResultType.FORM
@@ -480,13 +504,17 @@ async def test_bluetooth_flow_prefills_discovered_device(hass) -> None:
 @pytest.mark.asyncio
 async def test_bluetooth_flow_rejects_non_miot_service(hass) -> None:
     flow = config_flow(hass, SOURCE_BLUETOOTH)
-    result = await flow.async_step_bluetooth(discovery_info(supported=False))
+    result = await flow.async_step_bluetooth(discovery_info(product_id=None))
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_supported"
+
+    result = await flow.async_step_bluetooth(discovery_info(product_id=0x0001))
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "not_supported"
 
 
 @pytest.mark.asyncio
-async def test_reauth_updates_token(hass) -> None:
+async def test_reauth_retrieves_and_updates_local_key(hass) -> None:
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id=ADDRESS,
@@ -504,16 +532,31 @@ async def test_reauth_updates_token(hass) -> None:
 
     result = await flow.async_step_reauth(entry.data)
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reauth_confirm"
+    assert result["step_id"] == "cloud_auth"
 
-    with patch(
-        "custom_components.miot_ble.config_flow.async_validate_connection",
-        new=AsyncMock(),
+    client = SimpleNamespace(
+        async_login=AsyncMock(),
+        async_get_device_token=AsyncMock(return_value=TOKEN),
+        clear_sensitive_data=MagicMock(),
+        captcha_image=None,
+        verification_url=None,
+    )
+    with (
+        patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
+        patch(
+            "custom_components.miot_ble.config_flow.async_validate_connection",
+            new=AsyncMock(),
+        ),
     ):
-        result = await flow.async_step_reauth_confirm({CONF_TOKEN: TOKEN.upper()})
+        result = await flow.async_step_cloud_auth(
+            {"username": "user@example.com", "password": "secret"}
+        )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_TOKEN] == TOKEN
+    assert "username" not in entry.data
+    assert "password" not in entry.data
 
 
 @pytest.mark.asyncio

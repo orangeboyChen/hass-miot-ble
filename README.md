@@ -25,7 +25,7 @@ implemented with simulated GATT tests. The protocol has not yet been validated
 against a physical M73, so this repository should still be treated as
 experimental.
 
-The first target is the Muxin smart clothes dryer:
+The first target is the Muxiang M73 shoe dryer:
 
 | Model | MIoT specification | Status |
 | --- | --- | --- |
@@ -60,40 +60,33 @@ Before starting, Home Assistant needs a local Bluetooth adapter or a supported
 Bluetooth proxy that can make active connections. Keep the device powered on,
 near a Bluetooth adapter or proxy, and advertising.
 
-You also need the device's Xiaomi BLE binding token. This is a 12-byte value
-written as exactly 24 hexadecimal characters. It is not the 32-character
-Wi-Fi `miio` token. The token can be entered manually, reused from Home
-Assistant's official Xiaomi BLE integration, or retrieved from Xiaomi Cloud.
-
 1. In Home Assistant, open **Settings** > **Devices & services**.
 2. Select **Add integration** and search for **Xiaomi MIoT BLE**.
-3. Select a discovered device, or enter its Bluetooth address manually when no
-   discovery is available.
-4. Select the device model and optionally set a display name. Enter the
-   24-character BLE token if it is already available, or leave the field empty.
-5. When no local token is available, enter the Xiaomi account credentials used
-   to bind the device. They are sent directly to Xiaomi Cloud for this request
-   and are not stored in the config entry.
-6. If Xiaomi requests an image captcha, enter the characters shown in Home
+3. Select a supported nearby device and optionally set a display name. Devices
+   without an implemented profile are not listed.
+4. Home Assistant automatically reuses existing local access data from its
+   official Xiaomi BLE integration when available. Otherwise, sign in with the
+   Xiaomi account that owns the device. The credentials are sent directly to
+   Xiaomi Cloud during setup and are not stored in the config entry.
+5. If Xiaomi requests an image captcha, enter the characters shown in Home
    Assistant. If Xiaomi requests account verification, open the supplied Xiaomi
    page, complete its phone or email check, and paste the verification ticket
    back into Home Assistant. Challenge data and account credentials remain only
    in the active setup flow and are discarded afterward.
-7. The integration connects to the device and authenticates before it saves the
+6. The integration connects to the device and authenticates before it saves the
    config entry.
 
 For the initial M73 profile, a successful setup creates power and UV switches,
 a timer selector, and a remaining-time sensor. If setup reports that the device
 cannot be reached, check Bluetooth range and make sure Mi Home is not holding an
-active connection. If authentication fails, verify that the token belongs to
-the same physical device.
+active connection. If authentication fails, restart setup so Home Assistant can
+refresh the device's local access data.
 
 If the same address is already configured in Home Assistant's official Xiaomi
-BLE integration with a 24-character legacy bindkey, the token field can be left
-empty and the locally stored key is reused without showing the cloud login
-step. If a device later rejects its token, Home Assistant starts a
-reauthentication flow so the token can be replaced without deleting the device
-or its entities.
+BLE integration, its local access data is reused without showing the cloud
+login step. If a device later rejects that data, Home Assistant starts a Xiaomi
+account reauthentication flow and retrieves a replacement automatically without
+deleting the device or its entities.
 
 ## Current limitations
 
