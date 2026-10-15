@@ -1,0 +1,26 @@
+{
+  "title": "Xiaomi MIoT BLE",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a Xiaomi MIoT BLE device",
+        "description": "Select a nearby device and enter the 12-byte token from its Mi Home binding.",
+        "data": {
+          "address": "Bluetooth device",
+          "model": "Model",
+          "token": "BLE token",
+          "name": "Name"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the device",
+      "invalid_auth": "The device rejected the token",
+      "invalid_token": "The token must contain 24 hexadecimal characters"
+    },
+    "abort": {
+      "already_configured": "This device is already configured",
+      "not_supported": "The discovered Bluetooth device is not supported"
+    }
+  }
+}

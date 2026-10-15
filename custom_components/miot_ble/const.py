@@ -2,6 +2,10 @@
 
 DOMAIN = "miot_ble"
 
+CONF_TOKEN = "token"
+DEFAULT_UPDATE_INTERVAL = 60
+PLATFORMS = ("sensor", "select", "switch")
+
 BASE_UUID_SUFFIX = "-0000-1000-8000-00805f9b34fb"
 
 

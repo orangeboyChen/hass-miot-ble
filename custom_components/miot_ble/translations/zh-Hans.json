@@ -1,0 +1,26 @@
+{
+  "title": "小米 MIoT 蓝牙",
+  "config": {
+    "step": {
+      "user": {
+        "title": "添加小米 MIoT 蓝牙设备",
+        "description": "选择附近的设备，并输入米家绑定生成的 12 字节 token。",
+        "data": {
+          "address": "蓝牙设备",
+          "model": "型号",
+          "token": "蓝牙 token",
+          "name": "名称"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "无法连接设备",
+      "invalid_auth": "设备拒绝了该 token",
+      "invalid_token": "token 必须是 24 位十六进制字符"
+    },
+    "abort": {
+      "already_configured": "该设备已经配置",
+      "not_supported": "发现的蓝牙设备不受支持"
+    }
+  }
+}
