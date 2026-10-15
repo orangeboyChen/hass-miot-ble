@@ -10,9 +10,13 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.miot_ble.config_flow import (
+    CloudAuthenticationError,
+    CloudConnectionError,
+    CloudDeviceNotFoundError,
     MiotBleConfigFlow,
     _discovered_devices,
     _supports_miot_service,
+    async_fetch_cloud_token,
     async_validate_connection,
     find_existing_token,
     normalize_token,
@@ -192,7 +196,7 @@ async def test_user_flow_reuses_xiaomi_ble_bindkey(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_user_flow_requires_missing_token(hass) -> None:
+async def test_user_flow_routes_missing_token_to_cloud(hass) -> None:
     flow = config_flow(hass, SOURCE_USER)
     validate = AsyncMock()
     with (
@@ -208,8 +212,131 @@ async def test_user_flow_requires_missing_token(hass) -> None:
             }
         )
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"][CONF_TOKEN] == "token_required"
+    assert result["step_id"] == "cloud_auth"
     validate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    result = await flow.async_step_user(
+        {
+            CONF_ADDRESS: ADDRESS,
+            CONF_MODEL: MODEL,
+            CONF_TOKEN: "",
+            CONF_NAME: "Dryer",
+        }
+    )
+    assert result["step_id"] == "cloud_auth"
+
+    fetch = AsyncMock(return_value=TOKEN)
+    validate = AsyncMock()
+    with (
+        patch("custom_components.miot_ble.config_flow.async_fetch_cloud_token", fetch),
+        patch("custom_components.miot_ble.config_flow.async_validate_connection", validate),
+    ):
+        result = await flow.async_step_cloud_auth(
+            {"username": "user@example.com", "password": "secret"}
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_TOKEN] == TOKEN
+    assert "username" not in result["data"]
+    assert "password" not in result["data"]
+    fetch.assert_awaited_once_with(hass, ADDRESS, "user@example.com", "secret")
+    validate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cloud_error", "expected_error"),
+    [
+        (CloudAuthenticationError(), "cloud_invalid_auth"),
+        (CloudDeviceNotFoundError(), "cloud_device_not_found"),
+        (CloudConnectionError(), "cloud_error"),
+        (ValueError(), "cloud_key_unsupported"),
+    ],
+)
+async def test_cloud_flow_errors(hass, cloud_error: Exception, expected_error: str) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    with patch(
+        "custom_components.miot_ble.config_flow.async_fetch_cloud_token",
+        new=AsyncMock(side_effect=cloud_error),
+    ):
+        result = await flow.async_step_cloud_auth(
+            {"username": "user@example.com", "password": "secret"}
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"]["base"] == expected_error
+
+
+@pytest.mark.asyncio
+async def test_cloud_flow_rejects_missing_setup_state(hass) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    result = await flow.async_step_cloud_auth()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "missing_setup_data"
+
+
+@pytest.mark.asyncio
+async def test_fetch_cloud_token(hass) -> None:
+    from xiaomi_ble import XiaomiCloudBLEDevice
+
+    fetcher = SimpleNamespace(
+        get_device_info=AsyncMock(
+            return_value=XiaomiCloudBLEDevice("Dryer", ADDRESS, TOKEN.upper())
+        )
+    )
+    session = MagicMock()
+    with (
+        patch("xiaomi_ble.XiaomiCloudTokenFetch", return_value=fetcher) as fetch_class,
+        patch(
+            "custom_components.miot_ble.config_flow.async_get_clientsession",
+            return_value=session,
+        ),
+    ):
+        assert await async_fetch_cloud_token(hass, ADDRESS, "user@example.com", "secret") == TOKEN
+    fetch_class.assert_called_once_with("user@example.com", "secret", session)
+    fetcher.get_device_info.assert_awaited_once_with(ADDRESS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("library_error", "expected_error"),
+    [
+        ("auth", CloudAuthenticationError),
+        ("cloud", CloudConnectionError),
+        ("missing", CloudDeviceNotFoundError),
+    ],
+)
+async def test_fetch_cloud_token_errors(
+    hass, library_error: str, expected_error: type[Exception]
+) -> None:
+    from xiaomi_ble import XiaomiCloudException, XiaomiCloudInvalidAuthenticationException
+
+    if library_error == "auth":
+        side_effect = XiaomiCloudInvalidAuthenticationException("bad credentials")
+    elif library_error == "cloud":
+        side_effect = XiaomiCloudException("offline")
+    else:
+        side_effect = None
+    fetcher = SimpleNamespace(
+        get_device_info=(
+            AsyncMock(return_value=None)
+            if library_error == "missing"
+            else AsyncMock(side_effect=side_effect)
+        )
+    )
+    with (
+        patch("xiaomi_ble.XiaomiCloudTokenFetch", return_value=fetcher),
+        patch("custom_components.miot_ble.config_flow.async_get_clientsession"),
+        pytest.raises(expected_error),
+    ):
+        await async_fetch_cloud_token(hass, ADDRESS, "user@example.com", "secret")
 
 
 @pytest.mark.asyncio

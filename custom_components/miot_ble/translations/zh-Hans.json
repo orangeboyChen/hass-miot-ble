@@ -4,12 +4,20 @@
     "step": {
       "user": {
         "title": "添加小米 MIoT 蓝牙设备",
-        "description": "选择附近的设备。如果 Home Assistant 官方小米蓝牙集成已经保存了该设备的 12 字节旧版绑定密钥，可以留空蓝牙 token。",
+        "description": "选择附近的设备。可以手动输入 12 字节蓝牙 token，或留空以复用本地密钥或从小米云获取。",
         "data": {
           "address": "蓝牙设备",
           "model": "型号",
           "token": "蓝牙 token",
           "name": "名称"
+        }
+      },
+      "cloud_auth": {
+        "title": "从小米云获取蓝牙密钥",
+        "description": "登录以获取 {name} 的蓝牙密钥。账号密码仅用于本次请求，不会保存在 Home Assistant 中。",
+        "data": {
+          "username": "小米账号",
+          "password": "密码"
         }
       },
       "reauth_confirm": {
@@ -24,11 +32,15 @@
       "cannot_connect": "无法连接设备",
       "invalid_auth": "设备拒绝了该 token",
       "invalid_token": "token 必须是 24 位十六进制字符",
-      "token_required": "请输入 token，或先在 Home Assistant 官方小米蓝牙集成中配置该设备"
+      "cloud_invalid_auth": "小米云拒绝了该账号或密码",
+      "cloud_device_not_found": "该小米账号中没有找到此蓝牙设备",
+      "cloud_error": "无法查询小米云",
+      "cloud_key_unsupported": "小米云返回的密钥不是 12 字节蓝牙 token"
     },
     "abort": {
       "already_configured": "该设备已经配置",
-      "not_supported": "发现的蓝牙设备不受支持"
+      "not_supported": "发现的蓝牙设备不受支持",
+      "missing_setup_data": "设备配置信息已失效，请重新开始添加流程"
     }
   }
 }

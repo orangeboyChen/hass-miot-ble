@@ -12,8 +12,10 @@ from bleak import BleakClient
 from bleak_retry_connector import establish_connection
 from home_assistant_bluetooth import BluetoothServiceInfoBleak
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.const import CONF_ADDRESS, CONF_MODEL, CONF_NAME
+from homeassistant.const import CONF_ADDRESS, CONF_MODEL, CONF_NAME, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
 from .const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
 from .profiles import get_profile, iter_profiles
@@ -23,6 +25,18 @@ _LOGGER = logging.getLogger(__name__)
 _TOKEN_PATTERN = re.compile(r"[0-9a-fA-F]{24}")
 _XIAOMI_BLE_DOMAIN = "xiaomi_ble"
 _CONF_BINDKEY = "bindkey"
+
+
+class CloudAuthenticationError(Exception):
+    """Raised when Xiaomi Cloud rejects the supplied credentials."""
+
+
+class CloudConnectionError(Exception):
+    """Raised when Xiaomi Cloud cannot complete a BLE key request."""
+
+
+class CloudDeviceNotFoundError(Exception):
+    """Raised when Xiaomi Cloud does not return the selected BLE device."""
 
 
 def async_discovered_service_info(hass: Any) -> Any:
@@ -94,6 +108,35 @@ async def async_validate_connection(
             await client.disconnect()
 
 
+async def async_fetch_cloud_token(
+    hass: Any,
+    address: str,
+    username: str,
+    password: str,
+) -> str:
+    """Fetch a BLE key from Xiaomi Cloud without retaining account credentials."""
+    from xiaomi_ble import (
+        XiaomiCloudException,
+        XiaomiCloudInvalidAuthenticationException,
+        XiaomiCloudTokenFetch,
+    )
+
+    fetcher = XiaomiCloudTokenFetch(
+        username,
+        password,
+        async_get_clientsession(hass),
+    )
+    try:
+        device = await fetcher.get_device_info(address)
+    except XiaomiCloudInvalidAuthenticationException as error:
+        raise CloudAuthenticationError from error
+    except XiaomiCloudException as error:
+        raise CloudConnectionError from error
+    if device is None:
+        raise CloudDeviceNotFoundError
+    return normalize_token(device.bindkey)
+
+
 class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
     """Configure a Xiaomi MIoT BLE device."""
 
@@ -102,6 +145,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._discovered_address: str | None = None
         self._discovered_name: str | None = None
+        self._pending_setup: dict[str, str] | None = None
 
     @override
     async def async_step_bluetooth(
@@ -124,6 +168,13 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             address = str(user_input[CONF_ADDRESS]).strip()
             model = str(user_input[CONF_MODEL])
+            profile = get_profile(model)
+            name = str(user_input.get(CONF_NAME) or self._discovered_name or profile.name)
+            self._pending_setup = {
+                CONF_ADDRESS: address,
+                CONF_MODEL: model,
+                CONF_NAME: name,
+            }
             supplied_token = str(user_input.get(CONF_TOKEN, ""))
             try:
                 token = (
@@ -134,37 +185,15 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             except ValueError:
                 errors[CONF_TOKEN] = "invalid_token"
             else:
+                await self.async_set_unique_id(address, raise_on_progress=False)
+                self._abort_if_unique_id_configured()
                 if token is None:
-                    errors[CONF_TOKEN] = "token_required"
+                    return await self.async_step_cloud_auth()
                 else:
-                    await self.async_set_unique_id(address, raise_on_progress=False)
-                    self._abort_if_unique_id_configured()
-                    try:
-                        await async_validate_connection(
-                            self.hass,
-                            address,
-                            bytes.fromhex(token),
-                            model,
-                        )
-                    except AuthenticationError:
-                        errors["base"] = "invalid_auth"
-                    except Exception as error:
-                        _LOGGER.debug("Unable to connect to %s: %s", address, error)
-                        errors["base"] = "cannot_connect"
-                    else:
-                        profile = get_profile(model)
-                        name = str(
-                            user_input.get(CONF_NAME) or self._discovered_name or profile.name
-                        )
-                        return self.async_create_entry(
-                            title=name,
-                            data={
-                                CONF_ADDRESS: address,
-                                CONF_MODEL: model,
-                                CONF_NAME: name,
-                                CONF_TOKEN: token,
-                            },
-                        )
+                    result, error = await self._async_finish_setup(token)
+                    if result is not None:
+                        return result
+                    errors["base"] = error
 
         values = user_input or {}
         devices = _discovered_devices(self.hass)
@@ -189,6 +218,74 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_cloud_auth(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Fetch the selected device's BLE key from Xiaomi Cloud."""
+        if self._pending_setup is None:
+            return self.async_abort(reason="missing_setup_data")
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                token = await async_fetch_cloud_token(
+                    self.hass,
+                    self._pending_setup[CONF_ADDRESS],
+                    str(user_input[CONF_USERNAME]),
+                    str(user_input[CONF_PASSWORD]),
+                )
+            except CloudAuthenticationError:
+                errors["base"] = "cloud_invalid_auth"
+            except CloudDeviceNotFoundError:
+                errors["base"] = "cloud_device_not_found"
+            except CloudConnectionError as error:
+                _LOGGER.debug("Unable to query Xiaomi Cloud: %s", error)
+                errors["base"] = "cloud_error"
+            except ValueError:
+                errors["base"] = "cloud_key_unsupported"
+            else:
+                result, error = await self._async_finish_setup(token)
+                if result is not None:
+                    return result
+                errors["base"] = error
+
+        return self.async_show_form(
+            step_id="cloud_auth",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_USERNAME): cv.string,
+                    vol.Required(CONF_PASSWORD): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={"name": self._pending_setup[CONF_NAME]},
+        )
+
+    async def _async_finish_setup(self, token: str) -> tuple[ConfigFlowResult | None, str]:
+        """Authenticate with a BLE token and create the pending config entry."""
+        assert self._pending_setup is not None
+        address = self._pending_setup[CONF_ADDRESS]
+        try:
+            await async_validate_connection(
+                self.hass,
+                address,
+                bytes.fromhex(token),
+                self._pending_setup[CONF_MODEL],
+            )
+        except AuthenticationError:
+            return None, "invalid_auth"
+        except Exception as error:
+            _LOGGER.debug("Unable to connect to %s: %s", address, error)
+            return None, "cannot_connect"
+        return (
+            self.async_create_entry(
+                title=self._pending_setup[CONF_NAME],
+                data={**self._pending_setup, CONF_TOKEN: token},
+            ),
+            "",
         )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
