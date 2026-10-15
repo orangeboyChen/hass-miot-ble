@@ -24,6 +24,7 @@ from .cloud import (
     XiaomiCloudCaptchaError,
     XiaomiCloudCaptchaRequiredError,
     XiaomiCloudClient,
+    XiaomiCloudDeviceTokenUnavailableError,
     XiaomiCloudError,
     XiaomiCloudSessionError,
     XiaomiCloudVerificationError,
@@ -35,9 +36,7 @@ from .profiles import get_profile, profile_for_product_id
 from .protocol import AuthenticationError, MiotBleSession
 
 _LOGGER = logging.getLogger(__name__)
-_TOKEN_PATTERN = re.compile(r"(?:[0-9a-fA-F]{24}|[0-9a-fA-F]{32})")
-_XIAOMI_BLE_DOMAIN = "xiaomi_ble"
-_CONF_BINDKEY = "bindkey"
+_TOKEN_PATTERN = re.compile(r"[0-9a-fA-F]{24}")
 
 
 class CloudDeviceNotFoundError(Exception):
@@ -59,25 +58,11 @@ def async_ble_device_from_address(hass: Any, address: str) -> Any:
 
 
 def normalize_token(value: str) -> str:
-    """Normalize and validate a Xiaomi BLE local key."""
+    """Normalize and validate a 12-byte Xiaomi BLE Standard Auth token."""
     token = value.strip().lower()
     if not _TOKEN_PATTERN.fullmatch(token):
-        raise ValueError("A Xiaomi BLE local key must contain 24 or 32 hexadecimal characters")
+        raise ValueError("A Xiaomi BLE token must contain 24 hexadecimal characters")
     return token
-
-
-def find_existing_token(hass: Any, address: str) -> str | None:
-    """Return a legacy bindkey stored by Home Assistant's Xiaomi BLE integration."""
-    normalized_address = address.replace(":", "").lower()
-    for entry in hass.config_entries.async_entries(_XIAOMI_BLE_DOMAIN):
-        entry_address = str(entry.unique_id or entry.data.get(CONF_ADDRESS, ""))
-        if entry_address.replace(":", "").lower() != normalized_address:
-            continue
-        try:
-            return normalize_token(str(entry.data.get(_CONF_BINDKEY, "")))
-        except ValueError:
-            continue
-    return None
 
 
 def _profile_for_discovery(info: BluetoothServiceInfoBleak) -> DeviceProfile | None:
@@ -189,16 +174,9 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_MODEL: profile.model,
                 CONF_NAME: name,
             }
-            token = find_existing_token(self.hass, address)
             await self.async_set_unique_id(address, raise_on_progress=False)
             self._abort_if_unique_id_configured()
-            if token is None:
-                return await self.async_step_cloud_auth()
-            else:
-                result, error = await self._async_finish_setup(token)
-                if result is not None:
-                    return result
-                errors["base"] = error
+            return await self.async_step_cloud_auth()
 
         values = user_input or {}
         address_default = self._discovered_address or values.get(CONF_ADDRESS, "")
@@ -360,6 +338,8 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             error = "cloud_session_error"
         except CloudDeviceNotFoundError:
             error = "cloud_device_not_found"
+        except XiaomiCloudDeviceTokenUnavailableError:
+            error = "cloud_token_unavailable"
         except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as cloud_error:
             _LOGGER.debug("Unable to query Xiaomi Cloud: %s", cloud_error)
             error = "cloud_error"

@@ -64,10 +64,11 @@ near a Bluetooth adapter or proxy, and advertising.
 2. Select **Add integration** and search for **Xiaomi MIoT BLE**.
 3. Select a supported nearby device and optionally set a display name. Devices
    without an implemented profile are not listed.
-4. Home Assistant automatically reuses existing local access data from its
-   official Xiaomi BLE integration when available. Otherwise, sign in with the
-   Xiaomi account that owns the device. The credentials are sent directly to
-   Xiaomi Cloud during setup and are not stored in the config entry.
+4. Sign in with the Xiaomi account that owns the device. Home Assistant reads
+   the device's 12-byte Standard Auth token from Xiaomi Cloud. This token is
+   distinct from the MiBeacon broadcast bindkey used by the official Xiaomi BLE
+   integration. The account credentials are sent directly to Xiaomi Cloud
+   during setup and are not stored in the config entry.
 5. If Xiaomi requests an image captcha, enter the characters shown in Home
    Assistant. If Xiaomi requests account verification, open the supplied Xiaomi
    page and request a phone or email verification code. Do not submit the code
@@ -83,17 +84,21 @@ cannot be reached, check Bluetooth range and make sure Mi Home is not holding an
 active connection. If authentication fails, restart setup so Home Assistant can
 refresh the device's local access data.
 
-If the same address is already configured in Home Assistant's official Xiaomi
-BLE integration, its local access data is reused without showing the cloud
-login step. If a device later rejects that data, Home Assistant starts a Xiaomi
-account reauthentication flow and retrieves a replacement automatically without
-deleting the device or its entities.
+Home Assistant reads the current properties when the connection opens and then
+refreshes them locally over BLE every 60 seconds. A successful property write is
+applied immediately after the device confirms the changed value. Unsolicited
+device notifications are reflected by the next scheduled refresh rather than
+pushed to Home Assistant immediately.
+
+If a device later rejects its Standard Auth token, Home Assistant starts a
+Xiaomi account reauthentication flow and retrieves a replacement automatically
+without deleting the device or its entities.
 
 ## Current limitations
 
 - Only `muxnw.dryer.m73` has a device profile.
 - Xiaomi may introduce account verification methods that are not yet supported;
-  image captcha and phone or email verification-ticket flows are implemented.
+  image captcha and phone or email verification-code flows are implemented.
 - The M73 login and property operations still need validation on physical
   hardware.
 - Supporting another MIoT BLE model requires a tested device profile and may

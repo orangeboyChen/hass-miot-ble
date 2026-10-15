@@ -58,8 +58,12 @@ class XiaomiCloudVerificationError(XiaomiCloudError):
     """Raised when Xiaomi rejects an identity verification ticket."""
 
 
+class XiaomiCloudDeviceTokenUnavailableError(XiaomiCloudError):
+    """Raised when a BLE device has no Standard Auth token in Xiaomi Cloud."""
+
+
 class XiaomiCloudClient(XiaomiCloudConnector):
-    """Authenticate interactively and retrieve a BLE beacon key.
+    """Authenticate interactively and retrieve a BLE Standard Auth token.
 
     The challenge flow follows the behavior implemented by the MIT-licensed
     al-one/hass-xiaomi-miot project. Account secrets and challenge state remain
@@ -121,11 +125,12 @@ class XiaomiCloudClient(XiaomiCloudConnector):
         self._clear_challenges()
 
     async def async_get_device_token(self, mac: str) -> str | None:
-        """Return the BLE beacon key for a MAC address from all cloud regions."""
+        """Return the Standard Auth token for a MAC address from all cloud regions."""
         if not self._serviceToken or not self._ssecurity or not self.userId:
             raise XiaomiCloudSessionError("Xiaomi Cloud session is incomplete")
 
         formatted_mac = format_mac_upper(mac)
+        matched_without_token = False
         for server in SERVERS:
             homes: dict[str, str] = {}
             home_info = await self.get_homes(server)
@@ -148,10 +153,13 @@ class XiaomiCloudClient(XiaomiCloudConnector):
                     did = str(device.get("did") or "")
                     if str(device.get("mac") or "").upper() != formatted_mac or "blt" not in did:
                         continue
-                    key_result = await self.get_beaconkey(server, did)
-                    beacon_key = ((key_result or {}).get("result") or {}).get("beaconkey")
-                    if beacon_key:
-                        return str(beacon_key)
+                    if token := device.get("token"):
+                        return str(token)
+                    matched_without_token = True
+        if matched_without_token:
+            raise XiaomiCloudDeviceTokenUnavailableError(
+                "Xiaomi Cloud did not return a Standard Auth token for the device"
+            )
         return None
 
     def clear_sensitive_data(self) -> None:

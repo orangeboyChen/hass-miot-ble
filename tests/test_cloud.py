@@ -13,6 +13,7 @@ from custom_components.miot_ble.cloud import (
     XiaomiCloudCaptchaError,
     XiaomiCloudCaptchaRequiredError,
     XiaomiCloudClient,
+    XiaomiCloudDeviceTokenUnavailableError,
     XiaomiCloudError,
     XiaomiCloudSessionError,
     XiaomiCloudVerificationError,
@@ -303,14 +304,42 @@ async def test_device_token_lookup_checks_owned_and_shared_homes() -> None:
     client.get_devices = AsyncMock(
         side_effect=[
             {"result": {"device_info": []}},
-            {"result": {"device_info": [{"mac": ADDRESS, "did": "blt.123", "name": "Dryer"}]}},
+            {
+                "result": {
+                    "device_info": [
+                        {
+                            "mac": ADDRESS,
+                            "did": "blt.123",
+                            "name": "Dryer",
+                            "token": TOKEN,
+                        }
+                    ]
+                }
+            },
         ]
     )
-    client.get_beaconkey = AsyncMock(return_value={"result": {"beaconkey": TOKEN}})
 
     assert await client.async_get_device_token(ADDRESS) == TOKEN
     client.get_devices.assert_any_await("cn", "2", "456")
-    client.get_beaconkey.assert_awaited_once_with("cn", "blt.123")
+
+
+@pytest.mark.asyncio
+async def test_device_token_lookup_rejects_beaconkey_substitution() -> None:
+    client, _ = client_with_session()
+    client._serviceToken = "TOKEN"
+    client._ssecurity = base64.b64encode(b"security").decode()
+    client.userId = "123"
+    client.get_homes = AsyncMock(side_effect=[{"result": {"homelist": [{"id": 1}]}}] + [None] * 7)
+    client.get_dev_cnt = AsyncMock(return_value=None)
+    client.get_devices = AsyncMock(
+        side_effect=[
+            {"result": {"device_info": [{"mac": ADDRESS, "did": "blt.123", "name": "Dryer"}]}}
+        ]
+        + [{"result": {"device_info": []}}] * 7
+    )
+
+    with pytest.raises(XiaomiCloudDeviceTokenUnavailableError, match="Standard Auth"):
+        await client.async_get_device_token(ADDRESS)
 
 
 @pytest.mark.asyncio

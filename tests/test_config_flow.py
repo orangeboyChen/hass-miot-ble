@@ -13,6 +13,7 @@ from custom_components.miot_ble.cloud import (
     XiaomiCloudAuthenticationError,
     XiaomiCloudCaptchaError,
     XiaomiCloudCaptchaRequiredError,
+    XiaomiCloudDeviceTokenUnavailableError,
     XiaomiCloudError,
     XiaomiCloudSessionError,
     XiaomiCloudVerificationError,
@@ -25,7 +26,6 @@ from custom_components.miot_ble.config_flow import (
     _profile_for_discovery,
     async_fetch_cloud_token,
     async_validate_connection,
-    find_existing_token,
     normalize_token,
 )
 from custom_components.miot_ble.const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
@@ -34,7 +34,6 @@ from custom_components.miot_ble.protocol import AuthenticationError
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
 TOKEN = "00112233445566778899aabb"
-TOKEN_16 = "00112233445566778899aabbccddeeff"
 MODEL = "muxnw.dryer.m73"
 
 
@@ -72,9 +71,8 @@ def supported_devices() -> dict[str, tuple[str, object]]:
 
 def test_normalize_token() -> None:
     assert normalize_token(f"  {TOKEN.upper()}  ") == TOKEN
-    assert normalize_token(f"  {TOKEN_16.upper()}  ") == TOKEN_16
-    for invalid in ("", "0011", "g" * 24, "0" * 28, "0" * 34):
-        with pytest.raises(ValueError, match="24 or 32 hexadecimal"):
+    for invalid in ("", "0011", "g" * 24, "0" * 32):
+        with pytest.raises(ValueError, match="24 hexadecimal"):
             normalize_token(invalid)
 
 
@@ -102,97 +100,6 @@ def test_discovery_uses_product_id_and_hides_unsupported_devices() -> None:
         assert _discovered_devices(MagicMock()) == {ADDRESS: ("Unexpected name", MUXNW_DRYER_M73)}
 
 
-def test_find_existing_token(hass) -> None:
-    entry = MockConfigEntry(
-        domain="xiaomi_ble",
-        unique_id=ADDRESS.lower(),
-        data={"bindkey": TOKEN.upper()},
-    )
-    entry.add_to_hass(hass)
-    assert find_existing_token(hass, ADDRESS) == TOKEN
-
-    entry = MockConfigEntry(
-        domain="xiaomi_ble",
-        unique_id="11:22:33:44:55:66",
-        data={"bindkey": "invalid"},
-    )
-    entry.add_to_hass(hass)
-    assert find_existing_token(hass, "11:22:33:44:55:66") is None
-    assert find_existing_token(hass, "22:33:44:55:66:77") is None
-
-
-@pytest.mark.asyncio
-async def test_user_flow_reuses_automatic_local_key(hass) -> None:
-    flow = config_flow(hass, SOURCE_USER)
-    with (
-        patch(
-            "custom_components.miot_ble.config_flow._discovered_devices",
-            return_value=supported_devices(),
-        ),
-        patch(
-            "custom_components.miot_ble.config_flow.find_existing_token",
-            return_value=TOKEN,
-        ),
-        patch(
-            "custom_components.miot_ble.config_flow.async_validate_connection",
-            new=AsyncMock(),
-        ),
-    ):
-        result = await flow.async_step_user()
-        assert result["type"] is FlowResultType.FORM
-        fields = {key.schema for key in result["data_schema"].schema}
-        assert fields == {CONF_ADDRESS, CONF_NAME}
-        result = await flow.async_step_user(
-            {
-                CONF_ADDRESS: ADDRESS,
-                CONF_NAME: "Dryer",
-            },
-        )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Dryer"
-    assert result["data"][CONF_TOKEN] == TOKEN
-    assert result["data"][CONF_MODEL] == MODEL
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("validation_error", "expected_error"),
-    [
-        (AuthenticationError("bad token"), "invalid_auth"),
-        (ConnectionError("offline"), "cannot_connect"),
-    ],
-)
-async def test_user_flow_connection_errors(
-    hass,
-    validation_error: Exception,
-    expected_error: str,
-) -> None:
-    flow = config_flow(hass, SOURCE_USER)
-    with (
-        patch(
-            "custom_components.miot_ble.config_flow._discovered_devices",
-            return_value=supported_devices(),
-        ),
-        patch(
-            "custom_components.miot_ble.config_flow.find_existing_token",
-            return_value=TOKEN,
-        ),
-        patch(
-            "custom_components.miot_ble.config_flow.async_validate_connection",
-            new=AsyncMock(side_effect=validation_error),
-        ),
-    ):
-        result = await flow.async_step_user(
-            {
-                CONF_ADDRESS: ADDRESS,
-                CONF_NAME: "Dryer",
-            },
-        )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"]["base"] == expected_error
-
-
 @pytest.mark.asyncio
 async def test_user_flow_aborts_without_supported_devices(hass) -> None:
     flow = config_flow(hass, SOURCE_USER)
@@ -200,34 +107,6 @@ async def test_user_flow_aborts_without_supported_devices(hass) -> None:
         result = await flow.async_step_user()
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_supported_devices"
-
-
-@pytest.mark.asyncio
-async def test_user_flow_reuses_xiaomi_ble_bindkey(hass) -> None:
-    entry = MockConfigEntry(
-        domain="xiaomi_ble",
-        unique_id=ADDRESS,
-        data={"bindkey": TOKEN},
-    )
-    entry.add_to_hass(hass)
-    flow = config_flow(hass, SOURCE_USER)
-    validate = AsyncMock()
-    with (
-        patch(
-            "custom_components.miot_ble.config_flow._discovered_devices",
-            return_value=supported_devices(),
-        ),
-        patch("custom_components.miot_ble.config_flow.async_validate_connection", validate),
-    ):
-        result = await flow.async_step_user(
-            {
-                CONF_ADDRESS: ADDRESS,
-                CONF_NAME: "Dryer",
-            }
-        )
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_TOKEN] == TOKEN
-    validate.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -290,6 +169,48 @@ async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> Non
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("validation_error", "expected_error"),
+    [
+        (AuthenticationError("bad token"), "invalid_auth"),
+        (ConnectionError("offline"), "cannot_connect"),
+    ],
+)
+async def test_cloud_flow_reports_device_connection_failure(
+    hass,
+    validation_error: Exception,
+    expected_error: str,
+) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    client = SimpleNamespace(
+        async_login=AsyncMock(),
+        async_get_device_token=AsyncMock(return_value=TOKEN),
+        clear_sensitive_data=MagicMock(),
+        captcha_image=None,
+        verification_url=None,
+    )
+    with (
+        patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
+        patch(
+            "custom_components.miot_ble.config_flow.async_validate_connection",
+            new=AsyncMock(side_effect=validation_error),
+        ),
+    ):
+        result = await flow.async_step_cloud_auth(
+            {"username": "user@example.com", "password": "secret"}
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"]["base"] == expected_error
+    client.clear_sensitive_data.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("login_error", "expected_error"),
     [
         (
@@ -347,6 +268,7 @@ async def test_cloud_login_reports_specific_failure(
         ),
         (XiaomiCloudSessionError(), "cloud_session_error"),
         (CloudDeviceNotFoundError(), "cloud_device_not_found"),
+        (XiaomiCloudDeviceTokenUnavailableError(), "cloud_token_unavailable"),
         (XiaomiCloudError(), "cloud_error"),
         (ValueError(), "cloud_key_unsupported"),
     ],

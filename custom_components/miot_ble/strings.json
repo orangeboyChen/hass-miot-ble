@@ -42,10 +42,11 @@
       "cloud_verification_required": "Xiaomi requires additional account verification (error 81003). Complete the security check in Xiaomi Home or the Xiaomi account website, then try again",
       "cloud_session_error": "Account sign-in succeeded, but Xiaomi did not create a usable cloud session",
       "cloud_invalid_captcha": "Xiaomi Cloud rejected the captcha; try the refreshed image",
-      "cloud_invalid_verification": "Xiaomi Cloud rejected the verification ticket",
+      "cloud_invalid_verification": "Xiaomi Cloud rejected the verification code",
       "cloud_device_not_found": "The Bluetooth device was not found in this Xiaomi account",
+      "cloud_token_unavailable": "Xiaomi Cloud did not return the 12-byte Standard Auth token required for local control",
       "cloud_error": "Unable to query Xiaomi Cloud",
-      "cloud_key_unsupported": "Xiaomi Cloud returned an unsupported local access key"
+      "cloud_key_unsupported": "Xiaomi Cloud returned an invalid Standard Auth token"
     },
     "abort": {
       "already_configured": "This device is already configured",

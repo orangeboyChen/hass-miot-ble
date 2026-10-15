@@ -42,10 +42,11 @@
       "cloud_verification_required": "小米要求额外的账号安全验证（错误 81003），请先在小米之家或小米账号网页完成验证，然后重试",
       "cloud_session_error": "账号登录成功，但小米没有建立可用的云会话",
       "cloud_invalid_captcha": "小米云拒绝了验证码，请根据刷新后的图片重试",
-      "cloud_invalid_verification": "小米云拒绝了验证票据",
+      "cloud_invalid_verification": "小米云拒绝了验证码",
       "cloud_device_not_found": "该小米账号中没有找到此蓝牙设备",
+      "cloud_token_unavailable": "小米云没有返回本地控制所需的 12 字节 Standard Auth token",
       "cloud_error": "无法查询小米云",
-      "cloud_key_unsupported": "小米云返回了不受支持的本地访问密钥"
+      "cloud_key_unsupported": "小米云返回了无效的 Standard Auth token"
     },
     "abort": {
       "already_configured": "该设备已经配置",
