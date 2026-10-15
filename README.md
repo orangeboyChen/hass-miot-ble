@@ -13,8 +13,10 @@ device-specific behavior in the Bluetooth transport:
 
 ## Current status
 
-The protocol core and the first device profile are under development. The
-integration is not ready for installation or real-device control yet.
+The protocol core, Xiaomi Standard Auth session, encrypted property transport,
+and the first device profile are implemented with simulated GATT tests. The
+Home Assistant config flow and entities are still under development, and the
+protocol has not yet been validated against a physical M73.
 
 The first target is the Muxin smart clothes dryer:
 
