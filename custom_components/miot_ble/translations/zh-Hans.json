@@ -4,19 +4,27 @@
     "step": {
       "user": {
         "title": "添加小米 MIoT 蓝牙设备",
-        "description": "选择附近的设备，并输入米家绑定生成的 12 字节 token。",
+        "description": "选择附近的设备。如果 Home Assistant 官方小米蓝牙集成已经保存了该设备的 12 字节旧版绑定密钥，可以留空蓝牙 token。",
         "data": {
           "address": "蓝牙设备",
           "model": "型号",
           "token": "蓝牙 token",
           "name": "名称"
         }
+      },
+      "reauth_confirm": {
+        "title": "更新蓝牙 token",
+        "description": "为 {name} 输入新的 12 字节蓝牙 token。",
+        "data": {
+          "token": "蓝牙 token"
+        }
       }
     },
     "error": {
       "cannot_connect": "无法连接设备",
       "invalid_auth": "设备拒绝了该 token",
-      "invalid_token": "token 必须是 24 位十六进制字符"
+      "invalid_token": "token 必须是 24 位十六进制字符",
+      "token_required": "请输入 token，或先在 Home Assistant 官方小米蓝牙集成中配置该设备"
     },
     "abort": {
       "already_configured": "该设备已经配置",

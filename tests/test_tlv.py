@@ -15,12 +15,8 @@ def test_build_set_for_m73_properties() -> None:
 
 
 def test_build_set_supports_bool_and_uint16() -> None:
-    boolean = PropertySpec(
-        "enabled", 1, 2, ValueType.BOOL, EntityKind.SWITCH, writable=True
-    )
-    uint16 = PropertySpec(
-        "duration", 1, 3, ValueType.UINT16, EntityKind.SENSOR, writable=True
-    )
+    boolean = PropertySpec("enabled", 1, 2, ValueType.BOOL, EntityKind.SWITCH, writable=True)
+    uint16 = PropertySpec("duration", 1, 3, ValueType.UINT16, EntityKind.SENSOR, writable=True)
     assert build_set(1, boolean, True).hex() == "0c2001000001010200010001"
     assert build_set(2, uint16, 0x1234).hex() == "0d200200000101030002303412"
 

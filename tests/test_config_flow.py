@@ -4,18 +4,20 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.config_entries import SOURCE_BLUETOOTH, SOURCE_USER
+from homeassistant.config_entries import SOURCE_BLUETOOTH, SOURCE_REAUTH, SOURCE_USER
 from homeassistant.const import CONF_ADDRESS, CONF_MODEL, CONF_NAME
 from homeassistant.data_entry_flow import FlowResultType
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.miot_ble.config_flow import (
     MiotBleConfigFlow,
     _discovered_devices,
     _supports_miot_service,
     async_validate_connection,
+    find_existing_token,
     normalize_token,
 )
-from custom_components.miot_ble.const import CONF_TOKEN, UUID_MI_SERVICE
+from custom_components.miot_ble.const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
 from custom_components.miot_ble.protocol import AuthenticationError
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
@@ -23,9 +25,7 @@ TOKEN = "00112233445566778899aabb"
 MODEL = "muxnw.dryer.m73"
 
 
-def discovery_info(
-    *, supported: bool = True, name: str | None = "M73"
-) -> SimpleNamespace:
+def discovery_info(*, supported: bool = True, name: str | None = "M73") -> SimpleNamespace:
     """Build the discovery fields used by the config flow."""
     return SimpleNamespace(
         address=ADDRESS,
@@ -62,6 +62,25 @@ def test_service_detection_and_discovery_list() -> None:
         return_value=[discovery_info(), discovery_info(supported=False)],
     ):
         assert _discovered_devices(MagicMock()) == {ADDRESS: "M73"}
+
+
+def test_find_existing_token(hass) -> None:
+    entry = MockConfigEntry(
+        domain="xiaomi_ble",
+        unique_id=ADDRESS.lower(),
+        data={"bindkey": TOKEN.upper()},
+    )
+    entry.add_to_hass(hass)
+    assert find_existing_token(hass, ADDRESS) == TOKEN
+
+    entry = MockConfigEntry(
+        domain="xiaomi_ble",
+        unique_id="11:22:33:44:55:66",
+        data={"bindkey": "invalid"},
+    )
+    entry.add_to_hass(hass)
+    assert find_existing_token(hass, "11:22:33:44:55:66") is None
+    assert find_existing_token(hass, "22:33:44:55:66:77") is None
 
 
 @pytest.mark.asyncio
@@ -146,6 +165,54 @@ async def test_user_flow_rejects_invalid_token(hass) -> None:
 
 
 @pytest.mark.asyncio
+async def test_user_flow_reuses_xiaomi_ble_bindkey(hass) -> None:
+    entry = MockConfigEntry(
+        domain="xiaomi_ble",
+        unique_id=ADDRESS,
+        data={"bindkey": TOKEN},
+    )
+    entry.add_to_hass(hass)
+    flow = config_flow(hass, SOURCE_USER)
+    validate = AsyncMock()
+    with (
+        patch("custom_components.miot_ble.config_flow._discovered_devices", return_value={}),
+        patch("custom_components.miot_ble.config_flow.async_validate_connection", validate),
+    ):
+        result = await flow.async_step_user(
+            {
+                CONF_ADDRESS: ADDRESS,
+                CONF_MODEL: MODEL,
+                CONF_TOKEN: "",
+                CONF_NAME: "Dryer",
+            }
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_TOKEN] == TOKEN
+    validate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_user_flow_requires_missing_token(hass) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    validate = AsyncMock()
+    with (
+        patch("custom_components.miot_ble.config_flow._discovered_devices", return_value={}),
+        patch("custom_components.miot_ble.config_flow.async_validate_connection", validate),
+    ):
+        result = await flow.async_step_user(
+            {
+                CONF_ADDRESS: ADDRESS,
+                CONF_MODEL: MODEL,
+                CONF_TOKEN: "",
+                CONF_NAME: "Dryer",
+            }
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"][CONF_TOKEN] == "token_required"
+    validate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_bluetooth_flow_prefills_discovered_device(hass) -> None:
     flow = config_flow(hass, SOURCE_BLUETOOTH)
     info = discovery_info()
@@ -168,11 +235,45 @@ async def test_bluetooth_flow_rejects_non_miot_service(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_validate_connection() -> None:
+async def test_reauth_updates_token(hass) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=ADDRESS,
+        title="Dryer",
+        data={
+            CONF_ADDRESS: ADDRESS,
+            CONF_MODEL: MODEL,
+            CONF_TOKEN: "aabbccddeeff001122334455",
+            CONF_NAME: "Dryer",
+        },
+    )
+    entry.add_to_hass(hass)
+    flow = config_flow(hass, SOURCE_REAUTH)
+    flow.context["entry_id"] = entry.entry_id
+
+    result = await flow.async_step_reauth(entry.data)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+
     with patch(
-        "custom_components.miot_ble.config_flow.async_ble_device_from_address",
-        return_value=None,
-    ), pytest.raises(ConnectionError, match="not currently available"):
+        "custom_components.miot_ble.config_flow.async_validate_connection",
+        new=AsyncMock(),
+    ):
+        result = await flow.async_step_reauth_confirm({CONF_TOKEN: TOKEN.upper()})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_TOKEN] == TOKEN
+
+
+@pytest.mark.asyncio
+async def test_validate_connection() -> None:
+    with (
+        patch(
+            "custom_components.miot_ble.config_flow.async_ble_device_from_address",
+            return_value=None,
+        ),
+        pytest.raises(ConnectionError, match="not currently available"),
+    ):
         await async_validate_connection(MagicMock(), ADDRESS, bytes.fromhex(TOKEN), MODEL)
 
     client = SimpleNamespace(is_connected=True, disconnect=AsyncMock())

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from typing import Any, override
 
 import voluptuous as vol
@@ -20,6 +21,8 @@ from .protocol import AuthenticationError, MiotBleSession
 
 _LOGGER = logging.getLogger(__name__)
 _TOKEN_PATTERN = re.compile(r"[0-9a-fA-F]{24}")
+_XIAOMI_BLE_DOMAIN = "xiaomi_ble"
+_CONF_BINDKEY = "bindkey"
 
 
 def async_discovered_service_info(hass: Any) -> Any:
@@ -42,6 +45,20 @@ def normalize_token(value: str) -> str:
     if not _TOKEN_PATTERN.fullmatch(token):
         raise ValueError("A Xiaomi BLE token must contain 24 hexadecimal characters")
     return token
+
+
+def find_existing_token(hass: Any, address: str) -> str | None:
+    """Return a legacy bindkey stored by Home Assistant's Xiaomi BLE integration."""
+    normalized_address = address.replace(":", "").lower()
+    for entry in hass.config_entries.async_entries(_XIAOMI_BLE_DOMAIN):
+        entry_address = str(entry.unique_id or entry.data.get(CONF_ADDRESS, ""))
+        if entry_address.replace(":", "").lower() != normalized_address:
+            continue
+        try:
+            return normalize_token(str(entry.data.get(_CONF_BINDKEY, "")))
+        except ValueError:
+            continue
+    return None
 
 
 def _supports_miot_service(info: BluetoothServiceInfoBleak) -> bool:
@@ -101,45 +118,53 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
         return await self.async_step_user()
 
     @override
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Collect the model, address, and bound-device token."""
         errors: dict[str, str] = {}
         if user_input is not None:
             address = str(user_input[CONF_ADDRESS]).strip()
             model = str(user_input[CONF_MODEL])
+            supplied_token = str(user_input.get(CONF_TOKEN, ""))
             try:
-                token = normalize_token(str(user_input[CONF_TOKEN]))
+                token = (
+                    normalize_token(supplied_token)
+                    if supplied_token.strip()
+                    else find_existing_token(self.hass, address)
+                )
             except ValueError:
                 errors[CONF_TOKEN] = "invalid_token"
             else:
-                await self.async_set_unique_id(address, raise_on_progress=False)
-                self._abort_if_unique_id_configured()
-                try:
-                    await async_validate_connection(
-                        self.hass,
-                        address,
-                        bytes.fromhex(token),
-                        model,
-                    )
-                except AuthenticationError:
-                    errors["base"] = "invalid_auth"
-                except Exception as error:
-                    _LOGGER.debug("Unable to connect to %s: %s", address, error)
-                    errors["base"] = "cannot_connect"
+                if token is None:
+                    errors[CONF_TOKEN] = "token_required"
                 else:
-                    profile = get_profile(model)
-                    name = str(user_input.get(CONF_NAME) or self._discovered_name or profile.name)
-                    return self.async_create_entry(
-                        title=name,
-                        data={
-                            CONF_ADDRESS: address,
-                            CONF_MODEL: model,
-                            CONF_NAME: name,
-                            CONF_TOKEN: token,
-                        },
-                    )
+                    await self.async_set_unique_id(address, raise_on_progress=False)
+                    self._abort_if_unique_id_configured()
+                    try:
+                        await async_validate_connection(
+                            self.hass,
+                            address,
+                            bytes.fromhex(token),
+                            model,
+                        )
+                    except AuthenticationError:
+                        errors["base"] = "invalid_auth"
+                    except Exception as error:
+                        _LOGGER.debug("Unable to connect to %s: %s", address, error)
+                        errors["base"] = "cannot_connect"
+                    else:
+                        profile = get_profile(model)
+                        name = str(
+                            user_input.get(CONF_NAME) or self._discovered_name or profile.name
+                        )
+                        return self.async_create_entry(
+                            title=name,
+                            data={
+                                CONF_ADDRESS: address,
+                                CONF_MODEL: model,
+                                CONF_NAME: name,
+                                CONF_TOKEN: token,
+                            },
+                        )
 
         values = user_input or {}
         devices = _discovered_devices(self.hass)
@@ -159,9 +184,50 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_ADDRESS, default=address_default): address_validator,
                     vol.Required(CONF_MODEL, default=model_default): vol.In(models),
-                    vol.Required(CONF_TOKEN, default=values.get(CONF_TOKEN, "")): cv.string,
+                    vol.Optional(CONF_TOKEN, default=values.get(CONF_TOKEN, "")): cv.string,
                     vol.Optional(CONF_NAME, default=name_default): cv.string,
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+        """Start token replacement for an existing device."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Validate and save a replacement bound-device token."""
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                token = normalize_token(str(user_input[CONF_TOKEN]))
+            except ValueError:
+                errors[CONF_TOKEN] = "invalid_token"
+            else:
+                try:
+                    await async_validate_connection(
+                        self.hass,
+                        entry.data[CONF_ADDRESS],
+                        bytes.fromhex(token),
+                        entry.data[CONF_MODEL],
+                    )
+                except AuthenticationError:
+                    errors["base"] = "invalid_auth"
+                except Exception as error:
+                    _LOGGER.debug("Unable to validate replacement token: %s", error)
+                    errors["base"] = "cannot_connect"
+                else:
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        data_updates={CONF_TOKEN: token},
+                    )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_TOKEN): cv.string}),
+            errors=errors,
+            description_placeholders={"name": entry.title},
         )

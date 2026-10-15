@@ -75,6 +75,13 @@ cannot be reached, check Bluetooth range and make sure Mi Home is not holding an
 active connection. If authentication fails, verify that the token belongs to
 the same physical device.
 
+If the same address is already configured in Home Assistant's official Xiaomi
+BLE integration with a 24-character legacy bindkey, the token field can be left
+empty and the locally stored key is reused. Xiaomi account credentials are
+never read or stored by this integration. If a device later rejects its token,
+Home Assistant starts a reauthentication flow so the token can be replaced
+without deleting the device or its entities.
+
 ## Current limitations
 
 - Only `muxnw.dryer.m73` has a device profile.

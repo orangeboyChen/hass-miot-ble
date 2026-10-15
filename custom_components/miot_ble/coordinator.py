@@ -10,12 +10,13 @@ from bleak_retry_connector import establish_connection
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, CONF_MODEL
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import CONF_TOKEN, DEFAULT_UPDATE_INTERVAL, DOMAIN
 from .profile import DeviceProfile, PropertySpec
 from .profiles import get_profile
-from .protocol import MiotBleSession
+from .protocol import AuthenticationError, MiotBleSession
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,6 +87,9 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
             )
             values = await session.read_properties(properties)
             return {key: result.value for key, result in values.items()}
+        except AuthenticationError as error:
+            await self._drop_connection()
+            raise ConfigEntryAuthFailed("The device rejected its BLE token") from error
         except Exception as error:
             await self._drop_connection()
             raise UpdateFailed(str(error)) from error

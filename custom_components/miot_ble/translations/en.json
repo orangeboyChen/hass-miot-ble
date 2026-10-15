@@ -4,19 +4,27 @@
     "step": {
       "user": {
         "title": "Add a Xiaomi MIoT BLE device",
-        "description": "Select a nearby device and enter the 12-byte token from its Mi Home binding.",
+        "description": "Select a nearby device. If the official Xiaomi BLE integration already stores its 12-byte legacy bindkey, the BLE token may be left empty.",
         "data": {
           "address": "Bluetooth device",
           "model": "Model",
           "token": "BLE token",
           "name": "Name"
         }
+      },
+      "reauth_confirm": {
+        "title": "Update the BLE token",
+        "description": "Enter a new 12-byte BLE token for {name}.",
+        "data": {
+          "token": "BLE token"
+        }
       }
     },
     "error": {
       "cannot_connect": "Unable to connect to the device",
       "invalid_auth": "The device rejected the token",
-      "invalid_token": "The token must contain 24 hexadecimal characters"
+      "invalid_token": "The token must contain 24 hexadecimal characters",
+      "token_required": "Enter a token or first configure the device in the official Xiaomi BLE integration"
     },
     "abort": {
       "already_configured": "This device is already configured",

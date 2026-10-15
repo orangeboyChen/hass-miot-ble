@@ -13,9 +13,7 @@ from custom_components.miot_ble.const import PLATFORMS
 async def test_setup_entry() -> None:
     coordinator = SimpleNamespace(async_config_entry_first_refresh=AsyncMock())
     entry = SimpleNamespace(runtime_data=None)
-    hass = SimpleNamespace(
-        config_entries=SimpleNamespace(async_forward_entry_setups=AsyncMock())
-    )
+    hass = SimpleNamespace(config_entries=SimpleNamespace(async_forward_entry_setups=AsyncMock()))
     with patch(
         "custom_components.miot_ble.coordinator.MiotBleCoordinator",
         return_value=coordinator,

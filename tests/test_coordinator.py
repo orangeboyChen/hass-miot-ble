@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.const import CONF_ADDRESS, CONF_MODEL
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -12,7 +13,7 @@ from custom_components.miot_ble.const import CONF_TOKEN, DOMAIN
 from custom_components.miot_ble.coordinator import MiotBleCoordinator
 from custom_components.miot_ble.profile import ValueType
 from custom_components.miot_ble.profiles import MUXNW_DRYER_M73
-from custom_components.miot_ble.protocol import PropertyValue
+from custom_components.miot_ble.protocol import AuthenticationError, PropertyValue
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
 TOKEN = "00112233445566778899aabb"
@@ -38,9 +39,7 @@ async def test_update_and_set_property(hass) -> None:
     coordinator = make_coordinator(hass)
     power = MUXNW_DRYER_M73.property(2, 1)
     session = SimpleNamespace(
-        read_properties=AsyncMock(
-            return_value={(2, 1): PropertyValue(2, 1, ValueType.UINT8, 1)}
-        ),
+        read_properties=AsyncMock(return_value={(2, 1): PropertyValue(2, 1, ValueType.UINT8, 1)}),
         set_property=AsyncMock(return_value=PropertyValue(2, 1, ValueType.UINT8, 0)),
     )
     coordinator._ensure_session = AsyncMock(return_value=session)
@@ -58,6 +57,16 @@ async def test_update_failure_drops_connection(hass) -> None:
     coordinator._ensure_session = AsyncMock(side_effect=ConnectionError("offline"))
     coordinator._drop_connection = AsyncMock()
     with pytest.raises(UpdateFailed, match="offline"):
+        await coordinator._async_update_data()
+    coordinator._drop_connection.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_authentication_failure_requests_reauth(hass) -> None:
+    coordinator = make_coordinator(hass)
+    coordinator._ensure_session = AsyncMock(side_effect=AuthenticationError("bad token"))
+    coordinator._drop_connection = AsyncMock()
+    with pytest.raises(ConfigEntryAuthFailed, match="rejected"):
         await coordinator._async_update_data()
     coordinator._drop_connection.assert_awaited_once()
 
@@ -99,10 +108,13 @@ async def test_ensure_session_connects_and_authenticates(hass) -> None:
 @pytest.mark.asyncio
 async def test_ensure_session_handles_offline_and_login_failure(hass) -> None:
     coordinator = make_coordinator(hass)
-    with patch(
-        "custom_components.miot_ble.coordinator.async_ble_device_from_address",
-        return_value=None,
-    ), pytest.raises(ConnectionError, match="not in range"):
+    with (
+        patch(
+            "custom_components.miot_ble.coordinator.async_ble_device_from_address",
+            return_value=None,
+        ),
+        pytest.raises(ConnectionError, match="not in range"),
+    ):
         await coordinator._ensure_session()
 
     client = SimpleNamespace(is_connected=True, disconnect=AsyncMock())
@@ -119,7 +131,8 @@ async def test_ensure_session_handles_offline_and_login_failure(hass) -> None:
         patch(
             "custom_components.miot_ble.coordinator.MiotBleSession",
             return_value=session,
-        ),pytest.raises(RuntimeError, match="bad")
+        ),
+        pytest.raises(RuntimeError, match="bad"),
     ):
         await coordinator._ensure_session()
     client.disconnect.assert_awaited_once()

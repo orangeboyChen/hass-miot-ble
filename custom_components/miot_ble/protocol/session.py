@@ -67,9 +67,7 @@ class NotificationInbox:
         self._items.append((uuid.lower(), bytes(data)))
         self._event.set()
 
-    def _take(
-        self, predicate: Callable[[str, bytes], bool]
-    ) -> tuple[str, bytes] | None:
+    def _take(self, predicate: Callable[[str, bytes], bool]) -> tuple[str, bytes] | None:
         for index, item in enumerate(self._items):
             if predicate(*item):
                 del self._items[index]
@@ -174,11 +172,13 @@ class MiotBleSession:
 
     async def _receive_auth_payload(self, kind: int, expected_length: int) -> bytes:
         _, frame = await self._inbox.wait_for(
-            lambda uuid, data: uuid == UUID_AUTH
-            and len(data) >= 4
-            and data[0:2] == bytes(2)
-            and data[3] == kind
-            and data[2] in (0, 2),
+            lambda uuid, data: (
+                uuid == UUID_AUTH
+                and len(data) >= 4
+                and data[0:2] == bytes(2)
+                and data[3] == kind
+                and data[2] in (0, 2)
+            ),
             self._timeout,
         )
         if frame[2] == 2:
@@ -194,9 +194,11 @@ class MiotBleSession:
             chunks: list[bytes] = []
             for parcel_number in range(1, parcel_count + 1):
                 _, parcel = await self._inbox.wait_for(
-                    lambda uuid, data, number=parcel_number: uuid == UUID_AUTH
-                    and len(data) >= 2
-                    and data[0:2] == struct.pack("<H", number),
+                    lambda uuid, data, number=parcel_number: (
+                        uuid == UUID_AUTH
+                        and len(data) >= 2
+                        and data[0:2] == struct.pack("<H", number)
+                    ),
                     self._timeout,
                 )
                 chunks.append(parcel[2:])
@@ -229,8 +231,9 @@ class MiotBleSession:
             keys.app_proof(app_random, device_random),
         )
         _, confirmation = await self._inbox.wait_for(
-            lambda uuid, data: uuid == UUID_UPNP
-            and (data in (CONFIRM_LOGIN, DENY_LOGIN) or data[:1] == b"\xe0"),
+            lambda uuid, data: (
+                uuid == UUID_UPNP and (data in (CONFIRM_LOGIN, DENY_LOGIN) or data[:1] == b"\xe0")
+            ),
             self._timeout,
         )
         if confirmation != CONFIRM_LOGIN:
@@ -266,10 +269,12 @@ class MiotBleSession:
         if self._keys is None:
             raise AuthenticationError("The BLE session is not authenticated")
         _, frame = await self._inbox.wait_for(
-            lambda uuid, data: uuid == UUID_MIOT_NOTIFY
-            and len(data) >= 6
-            and data[0:2] == bytes(2)
-            and data[2:4] in (bytes(2), b"\x02\x00"),
+            lambda uuid, data: (
+                uuid == UUID_MIOT_NOTIFY
+                and len(data) >= 6
+                and data[0:2] == bytes(2)
+                and data[2:4] in (bytes(2), b"\x02\x00")
+            ),
             timeout or self._timeout,
         )
         if frame[2:4] == b"\x02\x00":
@@ -283,9 +288,11 @@ class MiotBleSession:
             chunks: list[bytes] = []
             for parcel_number in range(1, parcel_count + 1):
                 _, parcel = await self._inbox.wait_for(
-                    lambda uuid, data, number=parcel_number: uuid == UUID_MIOT_NOTIFY
-                    and len(data) >= 2
-                    and data[0:2] == struct.pack("<H", number),
+                    lambda uuid, data, number=parcel_number: (
+                        uuid == UUID_MIOT_NOTIFY
+                        and len(data) >= 2
+                        and data[0:2] == struct.pack("<H", number)
+                    ),
                     timeout or self._timeout,
                 )
                 chunks.append(parcel[2:])

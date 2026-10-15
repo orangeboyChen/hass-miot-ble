@@ -65,9 +65,7 @@ class SessionKeys:
         """Build the expected proof sent by the device during login."""
         return _hmac_sha256(self.device_key, device_random + app_random)
 
-    def verify_device_proof(
-        self, proof: bytes, app_random: bytes, device_random: bytes
-    ) -> bool:
+    def verify_device_proof(self, proof: bytes, app_random: bytes, device_random: bytes) -> bool:
         """Verify the device proof without exposing a timing side channel."""
         expected = self.expected_device_proof(app_random, device_random)
         return stdlib_hmac.compare_digest(proof, expected)

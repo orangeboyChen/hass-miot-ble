@@ -55,17 +55,20 @@ def build_set(transaction_id: int, prop: PropertySpec, value: int | bool) -> byt
         raise ValueError(f"{prop.name} is not writable")
     normalized = prop.validate_value(value)
     encoded = _encode_value(prop.value_type, normalized)
-    body = bytes(
-        (
-            Operation.SET,
-            1,
-            prop.siid,
-            prop.piid,
-            0,
-            len(encoded),
-            prop.value_type,
+    body = (
+        bytes(
+            (
+                Operation.SET,
+                1,
+                prop.siid,
+                prop.piid,
+                0,
+                len(encoded),
+                prop.value_type,
+            )
         )
-    ) + encoded
+        + encoded
+    )
     return _header(transaction_id, body)
 
 
