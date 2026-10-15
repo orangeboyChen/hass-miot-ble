@@ -9,9 +9,15 @@ from homeassistant.const import CONF_ADDRESS, CONF_MODEL, CONF_NAME
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.miot_ble.cloud import (
+    XiaomiCloudAuthenticationError,
+    XiaomiCloudCaptchaError,
+    XiaomiCloudCaptchaRequiredError,
+    XiaomiCloudError,
+    XiaomiCloudVerificationError,
+    XiaomiCloudVerificationRequiredError,
+)
 from custom_components.miot_ble.config_flow import (
-    CloudAuthenticationError,
-    CloudConnectionError,
     CloudDeviceNotFoundError,
     MiotBleConfigFlow,
     _discovered_devices,
@@ -229,10 +235,17 @@ async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> Non
     )
     assert result["step_id"] == "cloud_auth"
 
-    fetch = AsyncMock(return_value=TOKEN)
+    client = SimpleNamespace(
+        async_login=AsyncMock(),
+        async_get_device_token=AsyncMock(return_value=TOKEN),
+        clear_sensitive_data=MagicMock(),
+        captcha_image=None,
+        verification_url=None,
+    )
     validate = AsyncMock()
     with (
-        patch("custom_components.miot_ble.config_flow.async_fetch_cloud_token", fetch),
+        patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
         patch("custom_components.miot_ble.config_flow.async_validate_connection", validate),
     ):
         result = await flow.async_step_cloud_auth(
@@ -242,7 +255,9 @@ async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> Non
     assert result["data"][CONF_TOKEN] == TOKEN
     assert "username" not in result["data"]
     assert "password" not in result["data"]
-    fetch.assert_awaited_once_with(hass, ADDRESS, "user@example.com", "secret")
+    client.async_login.assert_awaited_once_with()
+    client.async_get_device_token.assert_awaited_once_with(ADDRESS)
+    client.clear_sensitive_data.assert_called_once_with()
     validate.assert_awaited_once()
 
 
@@ -250,9 +265,9 @@ async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> Non
 @pytest.mark.parametrize(
     ("cloud_error", "expected_error"),
     [
-        (CloudAuthenticationError(), "cloud_invalid_auth"),
+        (XiaomiCloudAuthenticationError(), "cloud_invalid_auth"),
         (CloudDeviceNotFoundError(), "cloud_device_not_found"),
-        (CloudConnectionError(), "cloud_error"),
+        (XiaomiCloudError(), "cloud_error"),
         (ValueError(), "cloud_key_unsupported"),
     ],
 )
@@ -263,9 +278,20 @@ async def test_cloud_flow_errors(hass, cloud_error: Exception, expected_error: s
         CONF_MODEL: MODEL,
         CONF_NAME: "Dryer",
     }
-    with patch(
-        "custom_components.miot_ble.config_flow.async_fetch_cloud_token",
-        new=AsyncMock(side_effect=cloud_error),
+    client = SimpleNamespace(
+        async_login=AsyncMock(),
+        async_get_device_token=AsyncMock(return_value=TOKEN),
+        clear_sensitive_data=MagicMock(),
+        captcha_image=None,
+        verification_url=None,
+    )
+    with (
+        patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
+        patch(
+            "custom_components.miot_ble.config_flow.async_fetch_cloud_token",
+            new=AsyncMock(side_effect=cloud_error),
+        ),
     ):
         result = await flow.async_step_cloud_auth(
             {"username": "user@example.com", "password": "secret"}
@@ -283,38 +309,23 @@ async def test_cloud_flow_rejects_missing_setup_state(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_cloud_token(hass) -> None:
-    from xiaomi_ble import XiaomiCloudBLEDevice
-
-    fetcher = SimpleNamespace(
-        get_device_info=AsyncMock(
-            return_value=XiaomiCloudBLEDevice("Dryer", ADDRESS, TOKEN.upper())
-        )
-    )
-    session = MagicMock()
-    with (
-        patch("xiaomi_ble.XiaomiCloudTokenFetch", return_value=fetcher) as fetch_class,
-        patch(
-            "custom_components.miot_ble.config_flow.async_get_clientsession",
-            return_value=session,
-        ),
-    ):
-        assert await async_fetch_cloud_token(hass, ADDRESS, "user@example.com", "secret") == TOKEN
-    fetch_class.assert_called_once_with("user@example.com", "secret", session)
-    fetcher.get_device_info.assert_awaited_once_with(ADDRESS)
+async def test_fetch_cloud_token() -> None:
+    client = SimpleNamespace(async_get_device_token=AsyncMock(return_value=TOKEN.upper()))
+    assert await async_fetch_cloud_token(client, ADDRESS) == TOKEN
+    client.async_get_device_token.assert_awaited_once_with(ADDRESS)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("library_error", "expected_error"),
     [
-        ("auth", CloudAuthenticationError),
-        ("cloud", CloudConnectionError),
+        ("auth", XiaomiCloudAuthenticationError),
+        ("cloud", XiaomiCloudError),
         ("missing", CloudDeviceNotFoundError),
     ],
 )
 async def test_fetch_cloud_token_errors(
-    hass, library_error: str, expected_error: type[Exception]
+    library_error: str, expected_error: type[Exception]
 ) -> None:
     from xiaomi_ble import XiaomiCloudException, XiaomiCloudInvalidAuthenticationException
 
@@ -324,19 +335,132 @@ async def test_fetch_cloud_token_errors(
         side_effect = XiaomiCloudException("offline")
     else:
         side_effect = None
-    fetcher = SimpleNamespace(
-        get_device_info=(
+    client = SimpleNamespace(
+        async_get_device_token=(
             AsyncMock(return_value=None)
             if library_error == "missing"
             else AsyncMock(side_effect=side_effect)
         )
     )
+    with pytest.raises(expected_error):
+        await async_fetch_cloud_token(client, ADDRESS)
+
+
+@pytest.mark.asyncio
+async def test_cloud_flow_routes_captcha_and_accepts_answer(hass) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    client = SimpleNamespace(
+        async_login=AsyncMock(side_effect=XiaomiCloudCaptchaRequiredError()),
+        async_get_device_token=AsyncMock(return_value=TOKEN),
+        clear_sensitive_data=MagicMock(),
+        captcha_image="IMAGE",
+        verification_url=None,
+    )
     with (
-        patch("xiaomi_ble.XiaomiCloudTokenFetch", return_value=fetcher),
-        patch("custom_components.miot_ble.config_flow.async_get_clientsession"),
-        pytest.raises(expected_error),
+        patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
     ):
-        await async_fetch_cloud_token(hass, ADDRESS, "user@example.com", "secret")
+        result = await flow.async_step_cloud_auth(
+            {"username": "user@example.com", "password": "secret"}
+        )
+    assert result["step_id"] == "cloud_captcha"
+    assert result["description_placeholders"]["captcha_image"].endswith("IMAGE")
+
+    client.async_login.side_effect = None
+    with patch(
+        "custom_components.miot_ble.config_flow.async_validate_connection",
+        new=AsyncMock(),
+    ):
+        result = await flow.async_step_cloud_captcha({"captcha": "1234"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    client.async_login.assert_awaited_with(captcha="1234")
+
+
+@pytest.mark.asyncio
+async def test_cloud_captcha_rejection_shows_refreshed_challenge(hass) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    flow._cloud_client = SimpleNamespace(
+        async_login=AsyncMock(side_effect=XiaomiCloudCaptchaError()),
+        clear_sensitive_data=MagicMock(),
+        captcha_image="REFRESHED",
+        verification_url=None,
+    )
+    result = await flow.async_step_cloud_captcha({"captcha": "wrong"})
+    assert result["step_id"] == "cloud_captcha"
+    assert result["errors"]["base"] == "cloud_invalid_captcha"
+    assert result["description_placeholders"]["captcha_image"].endswith("REFRESHED")
+
+
+@pytest.mark.asyncio
+async def test_cloud_flow_routes_verification_and_retries_ticket(hass) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    challenge = XiaomiCloudVerificationRequiredError("https://account.xiaomi.com/verify")
+    client = SimpleNamespace(
+        async_login=AsyncMock(side_effect=challenge),
+        async_get_device_token=AsyncMock(return_value=TOKEN),
+        clear_sensitive_data=MagicMock(),
+        captcha_image=None,
+        verification_url=challenge.url,
+    )
+    with (
+        patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
+    ):
+        result = await flow.async_step_cloud_auth(
+            {"username": "user@example.com", "password": "secret"}
+        )
+    assert result["step_id"] == "cloud_verify"
+    assert result["description_placeholders"]["verification_url"] == challenge.url
+
+    client.async_login.side_effect = XiaomiCloudVerificationError()
+    result = await flow.async_step_cloud_verify({"verification_ticket": "bad"})
+    assert result["errors"]["base"] == "cloud_invalid_verification"
+
+    client.async_login.side_effect = None
+    with patch(
+        "custom_components.miot_ble.config_flow.async_validate_connection",
+        new=AsyncMock(),
+    ):
+        result = await flow.async_step_cloud_verify({"verification_ticket": "good"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+@pytest.mark.asyncio
+async def test_cloud_challenge_requires_transient_state(hass) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    captcha = await flow.async_step_cloud_captcha()
+    verify = await flow.async_step_cloud_verify()
+    assert captcha["reason"] == "missing_cloud_challenge"
+    assert verify["reason"] == "missing_cloud_challenge"
+
+
+def test_removing_flow_clears_transient_cloud_state(hass) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    client = SimpleNamespace(clear_sensitive_data=MagicMock())
+    flow._cloud_client = client
+    flow.async_remove()
+    client.clear_sensitive_data.assert_called_once_with()
+    assert flow._cloud_client is None
 
 
 @pytest.mark.asyncio

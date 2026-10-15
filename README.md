@@ -74,7 +74,12 @@ Assistant's official Xiaomi BLE integration, or retrieved from Xiaomi Cloud.
 5. When no local token is available, enter the Xiaomi account credentials used
    to bind the device. They are sent directly to Xiaomi Cloud for this request
    and are not stored in the config entry.
-6. The integration connects to the device and authenticates before it saves the
+6. If Xiaomi requests an image captcha, enter the characters shown in Home
+   Assistant. If Xiaomi requests account verification, open the supplied Xiaomi
+   page, complete its phone or email check, and paste the verification ticket
+   back into Home Assistant. Challenge data and account credentials remain only
+   in the active setup flow and are discarded afterward.
+7. The integration connects to the device and authenticates before it saves the
    config entry.
 
 For the initial M73 profile, a successful setup creates power and UV switches,
@@ -93,8 +98,8 @@ or its entities.
 ## Current limitations
 
 - Only `muxnw.dryer.m73` has a device profile.
-- Xiaomi Cloud login may fail when the account requires an unsupported captcha
-  or additional verification step.
+- Xiaomi may introduce account verification methods that are not yet supported;
+  image captcha and phone or email verification-ticket flows are implemented.
 - The M73 login and property operations still need validation on physical
   hardware.
 - Supporting another MIoT BLE model requires a tested device profile and may

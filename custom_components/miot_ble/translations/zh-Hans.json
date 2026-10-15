@@ -20,6 +20,20 @@
           "password": "密码"
         }
       },
+      "cloud_captcha": {
+        "title": "完成小米云验证码",
+        "description": "输入下图中的字符，以继续获取 {name} 的蓝牙密钥。\n\n![小米验证码]({captcha_image})",
+        "data": {
+          "captcha": "验证码"
+        }
+      },
+      "cloud_verify": {
+        "title": "完成小米账号验证",
+        "description": "[打开小米验证页面]({verification_url})，完成手机或邮箱验证，然后输入验证票据以继续获取 {name} 的蓝牙密钥。",
+        "data": {
+          "verification_ticket": "验证票据"
+        }
+      },
       "reauth_confirm": {
         "title": "更新蓝牙 token",
         "description": "为 {name} 输入新的 12 字节蓝牙 token。",
@@ -33,6 +47,8 @@
       "invalid_auth": "设备拒绝了该 token",
       "invalid_token": "token 必须是 24 位十六进制字符",
       "cloud_invalid_auth": "小米云拒绝了该账号或密码",
+      "cloud_invalid_captcha": "小米云拒绝了验证码，请根据刷新后的图片重试",
+      "cloud_invalid_verification": "小米云拒绝了验证票据",
       "cloud_device_not_found": "该小米账号中没有找到此蓝牙设备",
       "cloud_error": "无法查询小米云",
       "cloud_key_unsupported": "小米云返回的密钥不是 12 字节蓝牙 token"
@@ -40,7 +56,8 @@
     "abort": {
       "already_configured": "该设备已经配置",
       "not_supported": "发现的蓝牙设备不受支持",
-      "missing_setup_data": "设备配置信息已失效，请重新开始添加流程"
+      "missing_setup_data": "设备配置信息已失效，请重新开始添加流程",
+      "missing_cloud_challenge": "小米云验证已失效，请重新开始添加流程"
     }
   }
 }

@@ -20,6 +20,20 @@
           "password": "Password"
         }
       },
+      "cloud_captcha": {
+        "title": "Complete Xiaomi Cloud captcha",
+        "description": "Enter the text shown below to continue retrieving the BLE key for {name}.\n\n![Xiaomi captcha]({captcha_image})",
+        "data": {
+          "captcha": "Captcha"
+        }
+      },
+      "cloud_verify": {
+        "title": "Complete Xiaomi account verification",
+        "description": "[Open the Xiaomi verification page]({verification_url}), complete the phone or email check, then enter the verification ticket to continue retrieving the BLE key for {name}.",
+        "data": {
+          "verification_ticket": "Verification ticket"
+        }
+      },
       "reauth_confirm": {
         "title": "Update the BLE token",
         "description": "Enter a new 12-byte BLE token for {name}.",
@@ -33,6 +47,8 @@
       "invalid_auth": "The device rejected the token",
       "invalid_token": "The token must contain 24 hexadecimal characters",
       "cloud_invalid_auth": "Xiaomi Cloud rejected the account credentials",
+      "cloud_invalid_captcha": "Xiaomi Cloud rejected the captcha; try the refreshed image",
+      "cloud_invalid_verification": "Xiaomi Cloud rejected the verification ticket",
       "cloud_device_not_found": "The Bluetooth device was not found in this Xiaomi account",
       "cloud_error": "Unable to query Xiaomi Cloud",
       "cloud_key_unsupported": "Xiaomi Cloud returned a key that is not a 12-byte BLE token"
@@ -40,7 +56,8 @@
     "abort": {
       "already_configured": "This device is already configured",
       "not_supported": "The discovered Bluetooth device is not supported",
-      "missing_setup_data": "Device setup information expired; start the flow again"
+      "missing_setup_data": "Device setup information expired; start the flow again",
+      "missing_cloud_challenge": "Xiaomi Cloud verification expired; start the flow again"
     }
   }
 }

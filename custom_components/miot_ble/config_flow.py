@@ -7,16 +7,27 @@ import re
 from collections.abc import Mapping
 from typing import Any, override
 
+import aiohttp
 import voluptuous as vol
 from bleak import BleakClient
 from bleak_retry_connector import establish_connection
 from home_assistant_bluetooth import BluetoothServiceInfoBleak
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_ADDRESS, CONF_MODEL, CONF_NAME, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
+from .cloud import (
+    XiaomiCloudAuthenticationError,
+    XiaomiCloudCaptchaError,
+    XiaomiCloudCaptchaRequiredError,
+    XiaomiCloudClient,
+    XiaomiCloudError,
+    XiaomiCloudVerificationError,
+    XiaomiCloudVerificationRequiredError,
+)
 from .const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
 from .profiles import get_profile, iter_profiles
 from .protocol import AuthenticationError, MiotBleSession
@@ -25,14 +36,6 @@ _LOGGER = logging.getLogger(__name__)
 _TOKEN_PATTERN = re.compile(r"[0-9a-fA-F]{24}")
 _XIAOMI_BLE_DOMAIN = "xiaomi_ble"
 _CONF_BINDKEY = "bindkey"
-
-
-class CloudAuthenticationError(Exception):
-    """Raised when Xiaomi Cloud rejects the supplied credentials."""
-
-
-class CloudConnectionError(Exception):
-    """Raised when Xiaomi Cloud cannot complete a BLE key request."""
 
 
 class CloudDeviceNotFoundError(Exception):
@@ -108,33 +111,22 @@ async def async_validate_connection(
             await client.disconnect()
 
 
-async def async_fetch_cloud_token(
-    hass: Any,
-    address: str,
-    username: str,
-    password: str,
-) -> str:
-    """Fetch a BLE key from Xiaomi Cloud without retaining account credentials."""
+async def async_fetch_cloud_token(client: XiaomiCloudClient, address: str) -> str:
+    """Fetch and validate a BLE key using an authenticated cloud client."""
     from xiaomi_ble import (
         XiaomiCloudException,
         XiaomiCloudInvalidAuthenticationException,
-        XiaomiCloudTokenFetch,
     )
 
-    fetcher = XiaomiCloudTokenFetch(
-        username,
-        password,
-        async_get_clientsession(hass),
-    )
     try:
-        device = await fetcher.get_device_info(address)
+        token = await client.async_get_device_token(address)
     except XiaomiCloudInvalidAuthenticationException as error:
-        raise CloudAuthenticationError from error
+        raise XiaomiCloudAuthenticationError from error
     except XiaomiCloudException as error:
-        raise CloudConnectionError from error
-    if device is None:
+        raise XiaomiCloudError("Unable to query Xiaomi Cloud") from error
+    if token is None:
         raise CloudDeviceNotFoundError
-    return normalize_token(device.bindkey)
+    return normalize_token(token)
 
 
 class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -146,6 +138,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovered_address: str | None = None
         self._discovered_name: str | None = None
         self._pending_setup: dict[str, str] | None = None
+        self._cloud_client: XiaomiCloudClient | None = None
 
     @override
     async def async_step_bluetooth(
@@ -228,27 +221,141 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="missing_setup_data")
         errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                token = await async_fetch_cloud_token(
+            self._clear_cloud_client()
+            self._cloud_client = XiaomiCloudClient(
+                str(user_input[CONF_USERNAME]),
+                str(user_input[CONF_PASSWORD]),
+                async_create_clientsession(
                     self.hass,
-                    self._pending_setup[CONF_ADDRESS],
-                    str(user_input[CONF_USERNAME]),
-                    str(user_input[CONF_PASSWORD]),
-                )
-            except CloudAuthenticationError:
+                    auto_cleanup=False,
+                    cookie_jar=aiohttp.DummyCookieJar(),
+                ),
+                owns_session=True,
+            )
+            try:
+                await self._cloud_client.async_login()
+            except XiaomiCloudCaptchaRequiredError:
+                return await self.async_step_cloud_captcha()
+            except XiaomiCloudVerificationRequiredError:
+                return await self.async_step_cloud_verify()
+            except XiaomiCloudAuthenticationError:
+                self._clear_cloud_client()
                 errors["base"] = "cloud_invalid_auth"
-            except CloudDeviceNotFoundError:
-                errors["base"] = "cloud_device_not_found"
-            except CloudConnectionError as error:
-                _LOGGER.debug("Unable to query Xiaomi Cloud: %s", error)
+            except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as error:
+                _LOGGER.debug("Unable to authenticate with Xiaomi Cloud: %s", error)
+                self._clear_cloud_client()
                 errors["base"] = "cloud_error"
-            except ValueError:
-                errors["base"] = "cloud_key_unsupported"
             else:
-                result, error = await self._async_finish_setup(token)
-                if result is not None:
-                    return result
-                errors["base"] = error
+                return await self._async_complete_cloud_login()
+
+        return self._show_cloud_auth(errors)
+
+    async def async_step_cloud_captcha(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Continue Xiaomi Cloud login with an image captcha."""
+        client = self._cloud_client
+        if self._pending_setup is None or client is None or not client.captcha_image:
+            return self.async_abort(reason="missing_cloud_challenge")
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            captcha = str(user_input.get("captcha") or "").strip()
+            if not captcha:
+                errors["base"] = "cloud_invalid_captcha"
+            else:
+                try:
+                    await client.async_login(captcha=captcha)
+                except XiaomiCloudCaptchaError, XiaomiCloudCaptchaRequiredError:
+                    errors["base"] = "cloud_invalid_captcha"
+                except XiaomiCloudVerificationRequiredError:
+                    return await self.async_step_cloud_verify()
+                except XiaomiCloudAuthenticationError:
+                    self._clear_cloud_client()
+                    return self._show_cloud_auth({"base": "cloud_invalid_auth"})
+                except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as error:
+                    _LOGGER.debug("Unable to submit Xiaomi captcha: %s", error)
+                    errors["base"] = "cloud_error"
+                else:
+                    return await self._async_complete_cloud_login()
+
+        return self.async_show_form(
+            step_id="cloud_captcha",
+            data_schema=vol.Schema({vol.Required("captcha"): cv.string}),
+            errors=errors,
+            description_placeholders={
+                "name": self._pending_setup[CONF_NAME],
+                "captcha_image": f"data:image/jpeg;base64,{client.captcha_image}",
+            },
+        )
+
+    async def async_step_cloud_verify(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Continue Xiaomi Cloud login with an identity verification ticket."""
+        client = self._cloud_client
+        if self._pending_setup is None or client is None or not client.verification_url:
+            return self.async_abort(reason="missing_cloud_challenge")
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            ticket = str(user_input.get("verification_ticket") or "").strip()
+            if not ticket:
+                errors["base"] = "cloud_invalid_verification"
+            else:
+                try:
+                    await client.async_login(verification_ticket=ticket)
+                except XiaomiCloudVerificationError:
+                    errors["base"] = "cloud_invalid_verification"
+                except XiaomiCloudCaptchaRequiredError:
+                    return await self.async_step_cloud_captcha()
+                except XiaomiCloudAuthenticationError:
+                    self._clear_cloud_client()
+                    return self._show_cloud_auth({"base": "cloud_invalid_auth"})
+                except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as error:
+                    _LOGGER.debug("Unable to submit Xiaomi verification ticket: %s", error)
+                    errors["base"] = "cloud_error"
+                else:
+                    return await self._async_complete_cloud_login()
+
+        return self.async_show_form(
+            step_id="cloud_verify",
+            data_schema=vol.Schema({vol.Required("verification_ticket"): cv.string}),
+            errors=errors,
+            description_placeholders={
+                "name": self._pending_setup[CONF_NAME],
+                "verification_url": client.verification_url,
+            },
+        )
+
+    async def _async_complete_cloud_login(self) -> ConfigFlowResult:
+        """Retrieve the key and finish setup after cloud authentication."""
+        assert self._pending_setup is not None
+        assert self._cloud_client is not None
+        try:
+            token = await async_fetch_cloud_token(
+                self._cloud_client,
+                self._pending_setup[CONF_ADDRESS],
+            )
+        except XiaomiCloudAuthenticationError:
+            error = "cloud_invalid_auth"
+        except CloudDeviceNotFoundError:
+            error = "cloud_device_not_found"
+        except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as cloud_error:
+            _LOGGER.debug("Unable to query Xiaomi Cloud: %s", cloud_error)
+            error = "cloud_error"
+        except ValueError:
+            error = "cloud_key_unsupported"
+        else:
+            result, error = await self._async_finish_setup(token)
+            if result is not None:
+                self._clear_cloud_client()
+                return result
+
+        self._clear_cloud_client()
+        return self._show_cloud_auth({"base": error})
+
+    def _show_cloud_auth(self, errors: dict[str, str]) -> ConfigFlowResult:
+        """Show the Xiaomi account form without persisting its values."""
+        assert self._pending_setup is not None
 
         return self.async_show_form(
             step_id="cloud_auth",
@@ -263,6 +370,19 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders={"name": self._pending_setup[CONF_NAME]},
         )
+
+    def _clear_cloud_client(self) -> None:
+        """Remove transient Xiaomi account and challenge state."""
+        if self._cloud_client is not None:
+            self._cloud_client.clear_sensitive_data()
+        self._cloud_client = None
+
+    @callback
+    @override
+    def async_remove(self) -> None:
+        """Clear transient account data when Home Assistant removes the flow."""
+        self._clear_cloud_client()
+        super().async_remove()
 
     async def _async_finish_setup(self, token: str) -> tuple[ConfigFlowResult | None, str]:
         """Authenticate with a BLE token and create the pending config entry."""
