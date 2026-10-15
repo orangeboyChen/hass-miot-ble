@@ -101,6 +101,34 @@ async def test_password_login_success() -> None:
 
 
 @pytest.mark.asyncio
+async def test_password_login_does_not_treat_step_one_location_as_authenticated() -> None:
+    client, session = client_with_session()
+    session.get.side_effect = [
+        Response(
+            {
+                "_sign": "SIGN",
+                "location": "https://account.xiaomi.com/fe/service/login",
+                "sid": "xiaomiio",
+            }
+        ),
+        Response({}, cookies=cookie(serviceToken="TOKEN", userId="123")),
+    ]
+    session.post.return_value = Response(
+        {
+            "location": "https://sts.api.io.mi.com/sts",
+            "ssecurity": base64.b64encode(b"security").decode(),
+            "userId": "123",
+        }
+    )
+
+    await client.async_login()
+
+    session.post.assert_awaited_once()
+    assert session.post.await_args.kwargs["data"]["_sign"] == "SIGN"
+    assert client._serviceToken == "TOKEN"
+
+
+@pytest.mark.asyncio
 async def test_password_login_rejects_credentials_and_malformed_data() -> None:
     client, session = client_with_session()
     session.get.return_value = Response({"_sign": "SIGN"})

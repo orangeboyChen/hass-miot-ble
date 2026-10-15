@@ -115,9 +115,7 @@ class XiaomiCloudClient(XiaomiCloudConnector):
         else:
             self._clear_challenges()
             auth = await self._async_login_step_1()
-            location = str(auth.get("location") or "")
-            if not location:
-                location = await self._async_login_step_2(auth)
+            location = await self._async_login_step_2(auth)
 
         await self._async_login_step_3(location)
         self._clear_challenges()
