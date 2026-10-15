@@ -14,6 +14,7 @@ from custom_components.miot_ble.cloud import (
     XiaomiCloudCaptchaError,
     XiaomiCloudCaptchaRequiredError,
     XiaomiCloudError,
+    XiaomiCloudSessionError,
     XiaomiCloudVerificationError,
     XiaomiCloudVerificationRequiredError,
 )
@@ -287,9 +288,62 @@ async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> Non
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("login_error", "expected_error"),
+    [
+        (
+            XiaomiCloudAuthenticationError(code=70016),
+            "cloud_invalid_password",
+        ),
+        (XiaomiCloudSessionError("missing token"), "cloud_session_error"),
+    ],
+)
+async def test_cloud_login_reports_specific_failure(
+    hass,
+    login_error: Exception,
+    expected_error: str,
+) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    client = SimpleNamespace(
+        async_login=AsyncMock(side_effect=login_error),
+        clear_sensitive_data=MagicMock(),
+        captcha_image=None,
+        verification_url=None,
+    )
+    with (
+        patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
+    ):
+        result = await flow.async_step_cloud_auth(
+            {"username": "user@example.com", "password": "secret"}
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"]["base"] == expected_error
+    client.clear_sensitive_data.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("cloud_error", "expected_error"),
     [
         (XiaomiCloudAuthenticationError(), "cloud_invalid_auth"),
+        (
+            XiaomiCloudAuthenticationError(code=70016),
+            "cloud_invalid_password",
+        ),
+        (
+            XiaomiCloudAuthenticationError(code=20003),
+            "cloud_invalid_account",
+        ),
+        (
+            XiaomiCloudAuthenticationError(code=81003),
+            "cloud_verification_required",
+        ),
+        (XiaomiCloudSessionError(), "cloud_session_error"),
         (CloudDeviceNotFoundError(), "cloud_device_not_found"),
         (XiaomiCloudError(), "cloud_error"),
         (ValueError(), "cloud_key_unsupported"),
@@ -343,7 +397,7 @@ async def test_fetch_cloud_token() -> None:
 @pytest.mark.parametrize(
     ("library_error", "expected_error"),
     [
-        ("auth", XiaomiCloudAuthenticationError),
+        ("auth", XiaomiCloudSessionError),
         ("cloud", XiaomiCloudError),
         ("missing", CloudDeviceNotFoundError),
     ],

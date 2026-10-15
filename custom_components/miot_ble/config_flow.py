@@ -25,6 +25,7 @@ from .cloud import (
     XiaomiCloudCaptchaRequiredError,
     XiaomiCloudClient,
     XiaomiCloudError,
+    XiaomiCloudSessionError,
     XiaomiCloudVerificationError,
     XiaomiCloudVerificationRequiredError,
 )
@@ -128,7 +129,7 @@ async def async_fetch_cloud_token(client: XiaomiCloudClient, address: str) -> st
     try:
         token = await client.async_get_device_token(address)
     except XiaomiCloudInvalidAuthenticationException as error:
-        raise XiaomiCloudAuthenticationError from error
+        raise XiaomiCloudSessionError("Xiaomi Cloud API rejected the session") from error
     except XiaomiCloudException as error:
         raise XiaomiCloudError("Unable to query Xiaomi Cloud") from error
     if token is None:
@@ -240,9 +241,18 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self.async_step_cloud_captcha()
             except XiaomiCloudVerificationRequiredError:
                 return await self.async_step_cloud_verify()
-            except XiaomiCloudAuthenticationError:
+            except XiaomiCloudAuthenticationError as error:
+                _LOGGER.warning(
+                    "Xiaomi account sign-in was rejected with code %s: %s",
+                    error.code,
+                    error,
+                )
                 self._clear_cloud_client()
-                errors["base"] = "cloud_invalid_auth"
+                errors["base"] = self._cloud_auth_error_key(error)
+            except XiaomiCloudSessionError as error:
+                _LOGGER.warning("Xiaomi Cloud session setup failed: %s", error)
+                self._clear_cloud_client()
+                errors["base"] = "cloud_session_error"
             except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as error:
                 _LOGGER.debug("Unable to authenticate with Xiaomi Cloud: %s", error)
                 self._clear_cloud_client()
@@ -271,9 +281,12 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cloud_invalid_captcha"
                 except XiaomiCloudVerificationRequiredError:
                     return await self.async_step_cloud_verify()
-                except XiaomiCloudAuthenticationError:
+                except XiaomiCloudAuthenticationError as error:
                     self._clear_cloud_client()
-                    return self._show_cloud_auth({"base": "cloud_invalid_auth"})
+                    return self._show_cloud_auth({"base": self._cloud_auth_error_key(error)})
+                except XiaomiCloudSessionError:
+                    self._clear_cloud_client()
+                    return self._show_cloud_auth({"base": "cloud_session_error"})
                 except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as error:
                     _LOGGER.debug("Unable to submit Xiaomi captcha: %s", error)
                     errors["base"] = "cloud_error"
@@ -309,9 +322,12 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cloud_invalid_verification"
                 except XiaomiCloudCaptchaRequiredError:
                     return await self.async_step_cloud_captcha()
-                except XiaomiCloudAuthenticationError:
+                except XiaomiCloudAuthenticationError as error:
                     self._clear_cloud_client()
-                    return self._show_cloud_auth({"base": "cloud_invalid_auth"})
+                    return self._show_cloud_auth({"base": self._cloud_auth_error_key(error)})
+                except XiaomiCloudSessionError:
+                    self._clear_cloud_client()
+                    return self._show_cloud_auth({"base": "cloud_session_error"})
                 except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as error:
                     _LOGGER.debug("Unable to submit Xiaomi verification ticket: %s", error)
                     errors["base"] = "cloud_error"
@@ -337,8 +353,11 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._cloud_client,
                 self._pending_setup[CONF_ADDRESS],
             )
-        except XiaomiCloudAuthenticationError:
-            error = "cloud_invalid_auth"
+        except XiaomiCloudAuthenticationError as auth_error:
+            error = self._cloud_auth_error_key(auth_error)
+        except XiaomiCloudSessionError as session_error:
+            _LOGGER.warning("Xiaomi Cloud API session failed: %s", session_error)
+            error = "cloud_session_error"
         except CloudDeviceNotFoundError:
             error = "cloud_device_not_found"
         except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as cloud_error:
@@ -372,6 +391,17 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders={"name": self._pending_setup[CONF_NAME]},
         )
+
+    @staticmethod
+    def _cloud_auth_error_key(error: XiaomiCloudAuthenticationError) -> str:
+        """Map Xiaomi account error codes to actionable Home Assistant errors."""
+        if error.code == 70016:
+            return "cloud_invalid_password"
+        if error.code in (20003, 70002):
+            return "cloud_invalid_account"
+        if error.code == 81003:
+            return "cloud_verification_required"
+        return "cloud_invalid_auth"
 
     def _clear_cloud_client(self) -> None:
         """Remove transient Xiaomi account and challenge state."""

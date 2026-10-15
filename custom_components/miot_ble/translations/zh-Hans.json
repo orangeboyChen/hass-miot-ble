@@ -36,7 +36,11 @@
     "error": {
       "cannot_connect": "无法连接设备",
       "invalid_auth": "设备拒绝了本地访问密钥",
-      "cloud_invalid_auth": "小米云拒绝了该账号或密码",
+      "cloud_invalid_auth": "小米拒绝了账号登录",
+      "cloud_invalid_account": "小米拒绝了账号标识（错误 20003/70002），请尝试小米 ID、邮箱或小米之家使用的完整手机号",
+      "cloud_invalid_password": "小米拒绝了密码（错误 70016）",
+      "cloud_verification_required": "小米要求额外的账号安全验证（错误 81003），请先在小米之家或小米账号网页完成验证，然后重试",
+      "cloud_session_error": "账号登录成功，但小米没有建立可用的云会话",
       "cloud_invalid_captcha": "小米云拒绝了验证码，请根据刷新后的图片重试",
       "cloud_invalid_verification": "小米云拒绝了验证票据",
       "cloud_device_not_found": "该小米账号中没有找到此蓝牙设备",

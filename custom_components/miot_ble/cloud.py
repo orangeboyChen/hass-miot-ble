@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
+import string
 import time
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -15,6 +17,9 @@ from xiaomi_ble.cloud import SERVERS, XiaomiCloudConnector, format_mac_upper
 ACCOUNT_BASE = "https://account.xiaomi.com"
 LOGIN_URL = f"{ACCOUNT_BASE}/pass/serviceLogin"
 LOGIN_AUTH_URL = f"{ACCOUNT_BASE}/pass/serviceLoginAuth2"
+MIOT_USER_AGENT = (
+    "Android-7.1.1-1.0.0-ONEPLUS A3010-136-{client_id} APP/xiaomi.smarthome APPV/62830"
+)
 
 
 class XiaomiCloudError(Exception):
@@ -23,6 +28,14 @@ class XiaomiCloudError(Exception):
 
 class XiaomiCloudAuthenticationError(XiaomiCloudError):
     """Raised when Xiaomi rejects the account credentials."""
+
+    def __init__(self, message: str = "Xiaomi rejected the account", *, code: int | None = None):
+        super().__init__(message)
+        self.code = code
+
+
+class XiaomiCloudSessionError(XiaomiCloudError):
+    """Raised when login succeeds without a usable Xiaomi Cloud session."""
 
 
 class XiaomiCloudCaptchaRequiredError(XiaomiCloudError):
@@ -62,8 +75,12 @@ class XiaomiCloudClient(XiaomiCloudConnector):
         owns_session: bool = False,
     ) -> None:
         super().__init__(username, password, session)
+        self._device_id = "".join(
+            secrets.choice(string.ascii_uppercase + string.digits) for _ in range(16)
+        )
+        self._agent = MIOT_USER_AGENT.format(client_id=self._device_id)
         self._cookies = {
-            "sdkVersion": "accountsdk-18.8.15",
+            "sdkVersion": "3.8.6",
             "deviceId": self._device_id,
         }
         self._account_cookies = dict(self._cookies)
@@ -108,7 +125,7 @@ class XiaomiCloudClient(XiaomiCloudConnector):
     async def async_get_device_token(self, mac: str) -> str | None:
         """Return the BLE beacon key for a MAC address from all cloud regions."""
         if not self._serviceToken or not self._ssecurity or not self.userId:
-            raise XiaomiCloudAuthenticationError("Xiaomi Cloud session is incomplete")
+            raise XiaomiCloudSessionError("Xiaomi Cloud session is incomplete")
 
         formatted_mac = format_mac_upper(mac)
         for server in SERVERS:
@@ -159,7 +176,6 @@ class XiaomiCloudClient(XiaomiCloudConnector):
 
     async def _async_login_step_1(self) -> dict[str, Any]:
         cookies = dict(self._account_cookies)
-        cookies.setdefault("userId", self._username)
         response = await self._session.get(
             LOGIN_URL,
             params={"sid": "xiaomiio", "_json": "true"},
@@ -173,7 +189,10 @@ class XiaomiCloudClient(XiaomiCloudConnector):
         if auth.get("code") == 0:
             self._store_auth(auth)
         if not auth.get("_sign") and not auth.get("location"):
-            raise XiaomiCloudAuthenticationError("Xiaomi rejected the account")
+            raise XiaomiCloudAuthenticationError(
+                "Xiaomi rejected the account",
+                code=self._error_code(auth),
+            )
         return auth
 
     async def _async_login_step_2(
@@ -217,7 +236,7 @@ class XiaomiCloudClient(XiaomiCloudConnector):
         if location := result.get("location"):
             self._store_auth(result)
             if not self._ssecurity:
-                raise XiaomiCloudAuthenticationError("Xiaomi login omitted account security data")
+                raise XiaomiCloudSessionError("Xiaomi login omitted account security data")
             return str(location)
 
         if notification_url := result.get("notificationUrl"):
@@ -233,15 +252,17 @@ class XiaomiCloudClient(XiaomiCloudConnector):
             raise XiaomiCloudCaptchaRequiredError("Xiaomi requires a captcha")
 
         self._clear_captcha()
-        if result.get("code") in (20003, 70002, 70016):
-            raise XiaomiCloudAuthenticationError("Xiaomi rejected the account credentials")
-        if result.get("code") == 81003 and self.verification_url:
-            raise XiaomiCloudVerificationRequiredError(self.verification_url)
+        code = self._error_code(result)
+        if code in (20003, 70002, 70016, 81003):
+            raise XiaomiCloudAuthenticationError(
+                "Xiaomi rejected the account sign-in",
+                code=code,
+            )
         raise XiaomiCloudError("Xiaomi returned an unknown login response")
 
     async def _async_login_step_3(self, location: str) -> None:
         if not location:
-            raise XiaomiCloudAuthenticationError("Xiaomi login omitted the service URL")
+            raise XiaomiCloudSessionError("Xiaomi login omitted the service URL")
         response = await self._session.get(
             self._absolute_url(location),
             headers=self._headers,
@@ -250,7 +271,7 @@ class XiaomiCloudClient(XiaomiCloudConnector):
         self._update_cookies(response)
         service_token = self._cookie_value(response, "serviceToken")
         if response.status != 200 or not service_token:
-            raise XiaomiCloudAuthenticationError("Xiaomi login omitted the service token")
+            raise XiaomiCloudSessionError("Xiaomi login omitted the service token")
         self._serviceToken = service_token
         self.userId = self._cookie_value(response, "userId") or self.userId
         self._cUserId = self._cookie_value(response, "cUserId") or self._cUserId
@@ -346,7 +367,7 @@ class XiaomiCloudClient(XiaomiCloudConnector):
                 )
                 self._update_cookies(response)
         if response.status >= 400:
-            raise XiaomiCloudAuthenticationError("Xiaomi verification could not complete login")
+            raise XiaomiCloudSessionError("Xiaomi verification could not complete login")
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -396,3 +417,10 @@ class XiaomiCloudClient(XiaomiCloudConnector):
     @staticmethod
     def _absolute_url(url: str) -> str:
         return urljoin(f"{ACCOUNT_BASE}/", url)
+
+    @staticmethod
+    def _error_code(data: dict[str, Any]) -> int | None:
+        try:
+            return int(data["code"])
+        except KeyError, TypeError, ValueError:
+            return None

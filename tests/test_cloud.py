@@ -14,6 +14,7 @@ from custom_components.miot_ble.cloud import (
     XiaomiCloudCaptchaRequiredError,
     XiaomiCloudClient,
     XiaomiCloudError,
+    XiaomiCloudSessionError,
     XiaomiCloudVerificationError,
     XiaomiCloudVerificationRequiredError,
 )
@@ -90,7 +91,13 @@ async def test_password_login_success() -> None:
     assert submitted["user"] == "user@example.com"
     assert submitted["hash"] == "5EBE2294ECD0E0F08EAB7690D2A6EE69"
     assert "secret" not in submitted.values()
-    assert session.get.await_args_list[0].kwargs["cookies"]["userId"] == "user@example.com"
+    login_request = session.get.await_args_list[0].kwargs
+    assert login_request["cookies"]["sdkVersion"] == "3.8.6"
+    assert "userId" not in login_request["cookies"]
+    assert len(login_request["cookies"]["deviceId"]) == 16
+    assert login_request["cookies"]["deviceId"].isalnum()
+    assert login_request["cookies"]["deviceId"].upper() == login_request["cookies"]["deviceId"]
+    assert login_request["cookies"]["deviceId"] in login_request["headers"]["User-Agent"]
 
 
 @pytest.mark.asyncio
@@ -98,12 +105,32 @@ async def test_password_login_rejects_credentials_and_malformed_data() -> None:
     client, session = client_with_session()
     session.get.return_value = Response({"_sign": "SIGN"})
     session.post.return_value = Response({"code": 70016})
-    with pytest.raises(XiaomiCloudAuthenticationError):
+    with pytest.raises(XiaomiCloudAuthenticationError) as error:
         await client.async_login()
+    assert error.value.code == 70016
 
     client, session = client_with_session()
     session.get.return_value = Response(raw_text="not-json")
     with pytest.raises(XiaomiCloudError, match="malformed"):
+        await client.async_login()
+
+
+@pytest.mark.asyncio
+async def test_password_login_requires_usable_cloud_session() -> None:
+    client, session = client_with_session()
+    session.get.side_effect = [
+        Response({"_sign": "SIGN"}),
+        Response({}),
+    ]
+    session.post.return_value = Response(
+        {
+            "location": "https://sts.api.io.mi.com/sts",
+            "ssecurity": base64.b64encode(b"security").decode(),
+            "userId": "123",
+        }
+    )
+
+    with pytest.raises(XiaomiCloudSessionError, match="service token"):
         await client.async_login()
 
 
@@ -261,7 +288,7 @@ async def test_device_token_lookup_checks_owned_and_shared_homes() -> None:
 @pytest.mark.asyncio
 async def test_device_lookup_requires_complete_session_and_can_miss() -> None:
     client, _ = client_with_session()
-    with pytest.raises(XiaomiCloudAuthenticationError):
+    with pytest.raises(XiaomiCloudSessionError):
         await client.async_get_device_token(ADDRESS)
 
     client._serviceToken = "TOKEN"
