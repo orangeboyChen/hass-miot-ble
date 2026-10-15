@@ -71,7 +71,26 @@ async def test_set_failure_drops_connection(hass) -> None:
     with pytest.raises(ConnectionError, match="offline"):
         await coordinator.async_set_property(power, 1)
 
+    assert coordinator._ensure_session.await_count == 2
+    assert coordinator._drop_connection.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_set_reconnects_and_retries_once(hass) -> None:
+    coordinator = make_coordinator(hass)
+    power = MUXNW_DRYER_M73.property(2, 1)
+    failed_session = SimpleNamespace(set_property=AsyncMock(side_effect=ConnectionError("lost")))
+    recovered_session = SimpleNamespace(
+        set_property=AsyncMock(return_value=PropertyValue(2, 1, ValueType.UINT8, 1))
+    )
+    coordinator._ensure_session = AsyncMock(side_effect=[failed_session, recovered_session])
+    coordinator._drop_connection = AsyncMock()
+
+    await coordinator.async_set_property(power, 1)
+
     coordinator._drop_connection.assert_awaited_once()
+    recovered_session.set_property.assert_awaited_once_with(power, 1)
+    assert coordinator.data == {(2, 1): 1}
 
 
 @pytest.mark.asyncio

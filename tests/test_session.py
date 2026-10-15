@@ -256,11 +256,17 @@ async def test_read_and_set_properties_with_direct_notifications() -> None:
     assert values[(2, 1)].value == 1
 
     feed(session, UUID_MIOT_WRITE, RECEIVE_READY, RECEIVE_OK)
+    read_request = bytes.fromhex("0620aa000100")
     notification = bytes.fromhex("0c20b2000401020100011000")
-    feed(session, UUID_MIOT_NOTIFY, direct_response(session._keys, 1, notification))
+    feed(
+        session,
+        UUID_MIOT_NOTIFY,
+        direct_response(session._keys, 1, read_request),
+        direct_response(session._keys, 2, notification),
+    )
     changed = await session.set_property(power, 0)
     assert changed.value == 0
-    assert [write[1] for write in client.writes].count(ACK_DATA) == 2
+    assert [write[1] for write in client.writes].count(ACK_DATA) == 3
 
 
 @pytest.mark.asyncio
@@ -311,11 +317,33 @@ async def test_background_receiver_routes_set_response_by_transaction_id() -> No
     feed(session, UUID_MIOT_WRITE, RECEIVE_READY, RECEIVE_OK)
     setter = asyncio.create_task(session.set_property(power, 0))
     await asyncio.sleep(0)
+    unrelated = bytes.fromhex("0c20b2000401020200011001")
     notification = bytes.fromhex("0c20b2000401020100011000")
-    feed(session, UUID_MIOT_NOTIFY, direct_response(session._keys, 1, notification))
+    feed(
+        session,
+        UUID_MIOT_NOTIFY,
+        direct_response(session._keys, 1, unrelated),
+        direct_response(session._keys, 2, notification),
+    )
 
     assert (await setter).value == 0
     assert session.property_values[(2, 1)].value == 0
+    assert session.property_values[(2, 2)].value == 1
+    await session.async_close()
+
+
+@pytest.mark.asyncio
+async def test_background_set_timeout_has_a_clear_error() -> None:
+    session = MiotBleSession(FakeClient(), TOKEN, MUXNW_DRYER_M73, timeout=0.001)
+    session._keys = SessionKeys.derive(TOKEN, APP_RANDOM, DEVICE_RANDOM)
+    session._send_request = AsyncMock()
+    session._receiver_task = asyncio.create_task(asyncio.Event().wait())
+    power = MUXNW_DRYER_M73.property(2, 1)
+
+    with pytest.raises(ResponseTimeoutError, match="power write confirmation"):
+        await session.set_property(power, 0)
+
+    assert session._pending_responses == {}
     await session.async_close()
 
 

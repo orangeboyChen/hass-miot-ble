@@ -42,6 +42,7 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
         self._client: BleakClient | None = None
         self._session: MiotBleSession | None = None
         self._connection_lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
         super().__init__(
             hass,
             _LOGGER,
@@ -131,15 +132,19 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
 
     async def async_set_property(self, prop: PropertySpec, value: int | bool) -> None:
         """Write one property and update the coordinator cache."""
-        try:
-            session = await self._ensure_session()
-            changed = await session.set_property(prop, value)
-            data = dict(self.data or {})
-            data[changed.key] = changed.value
-            self.async_set_updated_data(data)
-        except Exception:
-            await self._drop_connection()
-            raise
+        async with self._write_lock:
+            for attempt in range(2):
+                try:
+                    session = await self._ensure_session()
+                    changed = await session.set_property(prop, value)
+                    data = dict(self.data or {})
+                    data[changed.key] = changed.value
+                    self.async_set_updated_data(data)
+                    return
+                except Exception:
+                    await self._drop_connection()
+                    if attempt:
+                        raise
 
     async def _drop_connection(self) -> None:
         client = self._client

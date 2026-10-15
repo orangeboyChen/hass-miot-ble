@@ -127,7 +127,9 @@ class MiotBleSession:
         self._command_lock = asyncio.Lock()
         self._property_values: dict[tuple[int, int], PropertyValue] = {}
         self._property_callback: Callable[[tuple[PropertyValue, ...]], None] | None = None
-        self._pending_responses: dict[int, asyncio.Future[tuple[PropertyValue, ...]]] = {}
+        self._pending_responses: dict[
+            int, tuple[tuple[int, int], asyncio.Future[PropertyValue]]
+        ] = {}
         self._receiver_task: asyncio.Task[None] | None = None
         self._receiver_error: Exception | None = None
 
@@ -402,9 +404,13 @@ class MiotBleSession:
                     )
                     continue
                 self._record_properties(values)
-                pending = self._pending_responses.get(payload[2])
-                if pending is not None and not pending.done():
-                    pending.set_result(values)
+                pending_response = self._pending_responses.get(payload[2])
+                if pending_response is not None:
+                    expected_key, pending = pending_response
+                    for value in values:
+                        if value.key == expected_key and not pending.done():
+                            pending.set_result(value)
+                            break
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -425,7 +431,7 @@ class MiotBleSession:
         self._property_callback = None
         if task is not None:
             task.cancel()
-        for pending in self._pending_responses.values():
+        for _, pending in self._pending_responses.values():
             if not pending.done():
                 pending.set_exception(ConnectionError("Bluetooth session closed"))
         self._pending_responses.clear()
@@ -446,19 +452,30 @@ class MiotBleSession:
             request = build_set(transaction_id, prop, value)
             if self._receiver_task is not None:
                 pending = asyncio.get_running_loop().create_future()
-                self._pending_responses[transaction_id] = pending
+                self._pending_responses[transaction_id] = (prop.key, pending)
                 try:
                     await self._send_request(request)
-                    changed_values = await asyncio.wait_for(pending, self._timeout)
+                    try:
+                        return await asyncio.wait_for(pending, self._timeout)
+                    except TimeoutError as error:
+                        raise ResponseTimeoutError(
+                            f"Timed out waiting for {prop.name} write confirmation"
+                        ) from error
                 finally:
                     self._pending_responses.pop(transaction_id, None)
-                for changed in changed_values:
-                    if changed.key == prop.key:
-                        return changed
-                raise MiotBleError("Property write response omitted the changed property")
             await self._send_request(request)
             while True:
                 response = await self._receive_encrypted()
-                for changed in parse_properties(response):
+                try:
+                    changed_values = parse_properties(response)
+                except ValueError as error:
+                    _LOGGER.debug(
+                        "Ignoring MIoT payload while waiting for %s confirmation: %s (%s)",
+                        prop.name,
+                        response.hex(),
+                        error,
+                    )
+                    continue
+                for changed in changed_values:
                     if changed.key == prop.key:
                         return changed
