@@ -26,10 +26,10 @@
         }
       },
       "cloud_verify": {
-        "title": "完成小米账号验证",
-        "description": "[打开小米验证页面]({verification_url})，完成手机或邮箱验证，然后输入验证票据以继续配置 {name}。",
+        "title": "完成小米账号安全验证",
+        "description": "[打开小米验证页面]({verification_url})并发送手机或邮箱验证码。收到验证码后不要在小米网页提交，请回到此页面输入验证码以继续配置 {name}。",
         "data": {
-          "verification_ticket": "验证票据"
+          "verification_ticket": "手机或邮箱验证码"
         }
       }
     },

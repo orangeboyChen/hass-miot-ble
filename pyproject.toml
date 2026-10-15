@@ -1,6 +1,6 @@
 [project]
 name = "hass-miot-ble"
-version = "0.7.2"
+version = "0.7.3"
 description = "Local Xiaomi MIoT BLE control for Home Assistant"
 readme = "README.md"
 requires-python = ">=3.14.2,<3.15"

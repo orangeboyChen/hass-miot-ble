@@ -27,9 +27,9 @@
       },
       "cloud_verify": {
         "title": "Complete Xiaomi account verification",
-        "description": "[Open the Xiaomi verification page]({verification_url}), complete the phone or email check, then enter the verification ticket to continue setting up {name}.",
+        "description": "[Open the Xiaomi verification page]({verification_url}) and request a phone or email verification code. Do not submit the code on the Xiaomi page. Return here and enter the code below to continue setting up {name}.",
         "data": {
-          "verification_ticket": "Verification ticket"
+          "verification_ticket": "Phone or email verification code"
         }
       }
     },

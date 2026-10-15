@@ -70,9 +70,10 @@ near a Bluetooth adapter or proxy, and advertising.
    Xiaomi Cloud during setup and are not stored in the config entry.
 5. If Xiaomi requests an image captcha, enter the characters shown in Home
    Assistant. If Xiaomi requests account verification, open the supplied Xiaomi
-   page, complete its phone or email check, and paste the verification ticket
-   back into Home Assistant. Challenge data and account credentials remain only
-   in the active setup flow and are discarded afterward.
+   page and request a phone or email verification code. Do not submit the code
+   on the Xiaomi page; enter it in Home Assistant instead. Challenge data and
+   account credentials remain only in the active setup flow and are discarded
+   afterward.
 6. The integration connects to the device and authenticates before it saves the
    config entry.
 
