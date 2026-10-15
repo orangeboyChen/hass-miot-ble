@@ -35,7 +35,7 @@ from .profiles import get_profile, profile_for_product_id
 from .protocol import AuthenticationError, MiotBleSession
 
 _LOGGER = logging.getLogger(__name__)
-_TOKEN_PATTERN = re.compile(r"[0-9a-fA-F]{24}")
+_TOKEN_PATTERN = re.compile(r"(?:[0-9a-fA-F]{24}|[0-9a-fA-F]{32})")
 _XIAOMI_BLE_DOMAIN = "xiaomi_ble"
 _CONF_BINDKEY = "bindkey"
 
@@ -59,10 +59,10 @@ def async_ble_device_from_address(hass: Any, address: str) -> Any:
 
 
 def normalize_token(value: str) -> str:
-    """Normalize and validate a 12-byte Xiaomi BLE token."""
+    """Normalize and validate a Xiaomi BLE local key."""
     token = value.strip().lower()
     if not _TOKEN_PATTERN.fullmatch(token):
-        raise ValueError("A Xiaomi BLE token must contain 24 hexadecimal characters")
+        raise ValueError("A Xiaomi BLE local key must contain 24 or 32 hexadecimal characters")
     return token
 
 

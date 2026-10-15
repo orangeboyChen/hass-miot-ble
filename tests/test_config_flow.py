@@ -34,6 +34,7 @@ from custom_components.miot_ble.protocol import AuthenticationError
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
 TOKEN = "00112233445566778899aabb"
+TOKEN_16 = "00112233445566778899aabbccddeeff"
 MODEL = "muxnw.dryer.m73"
 
 
@@ -71,8 +72,9 @@ def supported_devices() -> dict[str, tuple[str, object]]:
 
 def test_normalize_token() -> None:
     assert normalize_token(f"  {TOKEN.upper()}  ") == TOKEN
-    for invalid in ("", "0011", "g" * 24):
-        with pytest.raises(ValueError, match="24 hexadecimal"):
+    assert normalize_token(f"  {TOKEN_16.upper()}  ") == TOKEN_16
+    for invalid in ("", "0011", "g" * 24, "0" * 28, "0" * 34):
+        with pytest.raises(ValueError, match="24 or 32 hexadecimal"):
             normalize_token(invalid)
 
 
