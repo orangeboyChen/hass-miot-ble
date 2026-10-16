@@ -8,8 +8,13 @@ from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import UnitOfTime
 
-from custom_components.miot_ble.binary_sensor import MiotBleBinarySensor
+from custom_components.miot_ble.binary_sensor import (
+    MiotBleBinarySensor,
+    MiotBleConnectionBinarySensor,
+)
 from custom_components.miot_ble.binary_sensor import async_setup_entry as setup_binary_sensor
+from custom_components.miot_ble.button import MiotBleConnectButton, MiotBleDisconnectButton
+from custom_components.miot_ble.button import async_setup_entry as setup_button
 from custom_components.miot_ble.entity import MiotBleEntity
 from custom_components.miot_ble.number import MiotBleNumber
 from custom_components.miot_ble.number import async_setup_entry as setup_number
@@ -31,7 +36,10 @@ def make_coordinator(data=None, profile=MUXNW_DRYER_M73):
         entry=SimpleNamespace(title="Dryer"),
         data=data or {},
         last_update_success=True,
+        connected=True,
         async_set_property=AsyncMock(),
+        async_connect=AsyncMock(),
+        async_disconnect=AsyncMock(),
     )
 
 
@@ -41,7 +49,10 @@ def test_base_entity_metadata_and_value() -> None:
     assert entity.unique_id == "aabbccddeeff_2_1"
     assert entity.name == "Power"
     assert entity.property_value == 1
+    assert entity.available
     assert entity.device_info["manufacturer"] == "Xiaomi"
+    coordinator.connected = False
+    assert not entity.available
 
 
 @pytest.mark.asyncio
@@ -98,6 +109,29 @@ def test_sensor_entity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_connection_entities() -> None:
+    coordinator = make_coordinator()
+    connection = MiotBleConnectionBinarySensor(coordinator)
+    connect = MiotBleConnectButton(coordinator)
+    disconnect = MiotBleDisconnectButton(coordinator)
+
+    assert connection.unique_id == "aabbccddeeff_connection"
+    assert connection.available
+    assert connection.is_on
+    assert not connect.available
+    assert disconnect.available
+
+    coordinator.connected = False
+    assert not connection.is_on
+    assert connect.available
+    assert not disconnect.available
+    await connect.async_press()
+    await disconnect.async_press()
+    coordinator.async_connect.assert_awaited_once()
+    coordinator.async_disconnect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_number_and_binary_sensor_entities() -> None:
     number = PropertySpec(
         "target",
@@ -144,12 +178,16 @@ async def test_platform_setup_functions() -> None:
     await setup_select(None, entry, entities.extend)
     await setup_sensor(None, entry, entities.extend)
     await setup_binary_sensor(None, entry, entities.extend)
+    await setup_button(None, entry, entities.extend)
     await setup_number(None, entry, entities.extend)
     assert [type(entity) for entity in entities] == [
         MiotBleSwitch,
         MiotBleSwitch,
         MiotBleSelect,
         MiotBleSensor,
+        MiotBleConnectionBinarySensor,
+        MiotBleConnectButton,
+        MiotBleDisconnectButton,
     ]
 
     number = PropertySpec(
@@ -168,4 +206,8 @@ async def test_platform_setup_functions() -> None:
     generated: list[object] = []
     await setup_number(None, entry, generated.extend)
     await setup_binary_sensor(None, entry, generated.extend)
-    assert [type(entity) for entity in generated] == [MiotBleNumber, MiotBleBinarySensor]
+    assert [type(entity) for entity in generated] == [
+        MiotBleNumber,
+        MiotBleConnectionBinarySensor,
+        MiotBleBinarySensor,
+    ]

@@ -55,5 +55,20 @@
       "missing_setup_data": "设备配置信息已失效，请重新开始添加流程",
       "missing_cloud_challenge": "小米云验证已失效，请重新开始添加流程"
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connection": {
+        "name": "连接状态"
+      }
+    },
+    "button": {
+      "connect": {
+        "name": "连接"
+      },
+      "disconnect": {
+        "name": "断开连接"
+      }
+    }
   }
 }

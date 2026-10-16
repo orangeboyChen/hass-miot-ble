@@ -92,6 +92,11 @@ refresh checks connection health and reconnects and resubscribes when needed.
 The device generally accepts only one active controller, so close Mi Home while
 Home Assistant owns the BLE connection.
 
+Each device also exposes a diagnostic connection binary sensor and Connect and
+Disconnect buttons. Disconnect pauses automatic reconnection until Connect is
+pressed. Property entities are unavailable whenever the authenticated property
+channel is disconnected.
+
 If a device later rejects its Standard Auth token, Home Assistant starts a
 Xiaomi account reauthentication flow and retrieves a replacement automatically
 without deleting the device or its entities.

@@ -277,6 +277,7 @@ async def test_subscribe_continuously_updates_property_cache() -> None:
     power = MUXNW_DRYER_M73.property(2, 1)
     updates: list[tuple] = []
     changed = asyncio.Event()
+    assert not session.receiver_running
 
     def callback(values: tuple) -> None:
         updates.append(values)
@@ -287,6 +288,7 @@ async def test_subscribe_continuously_updates_property_cache() -> None:
     snapshot = bytes.fromhex("0e20b10003010201000000011001")
     feed(session, UUID_MIOT_NOTIFY, direct_response(session._keys, 0, snapshot))
     initial = await session.subscribe_properties((power,), callback)
+    assert session.receiver_running
 
     notification = bytes.fromhex("0c2044000401020100011000")
     feed(session, UUID_MIOT_NOTIFY, direct_response(session._keys, 1, notification))
@@ -300,10 +302,11 @@ async def test_subscribe_continuously_updates_property_cache() -> None:
     with pytest.raises(MiotBleError, match="already owns"):
         await session.read_properties((power,))
     await session.async_close()
+    assert not session.receiver_running
 
 
 @pytest.mark.asyncio
-async def test_background_receiver_routes_set_response_by_transaction_id() -> None:
+async def test_background_receiver_matches_target_value_across_transaction_ids() -> None:
     client = FakeClient()
     session = MiotBleSession(client, TOKEN, MUXNW_DRYER_M73)
     session._keys = SessionKeys.derive(TOKEN, APP_RANDOM, DEVICE_RANDOM)
@@ -317,18 +320,17 @@ async def test_background_receiver_routes_set_response_by_transaction_id() -> No
     feed(session, UUID_MIOT_WRITE, RECEIVE_READY, RECEIVE_OK)
     setter = asyncio.create_task(session.set_property(power, 0))
     await asyncio.sleep(0)
-    unrelated = bytes.fromhex("0c20b2000401020200011001")
-    notification = bytes.fromhex("0c20b2000401020100011000")
+    stale_value = bytes.fromhex("0c20b2000401020100011001")
+    notification = bytes.fromhex("0c2044000401020100011000")
     feed(
         session,
         UUID_MIOT_NOTIFY,
-        direct_response(session._keys, 1, unrelated),
+        direct_response(session._keys, 1, stale_value),
         direct_response(session._keys, 2, notification),
     )
 
     assert (await setter).value == 0
     assert session.property_values[(2, 1)].value == 0
-    assert session.property_values[(2, 2)].value == 1
     await session.async_close()
 
 

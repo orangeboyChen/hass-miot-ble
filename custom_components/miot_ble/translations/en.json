@@ -55,5 +55,20 @@
       "missing_setup_data": "Device setup information expired; start the flow again",
       "missing_cloud_challenge": "Xiaomi Cloud verification expired; start the flow again"
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connection": {
+        "name": "Connection"
+      }
+    },
+    "button": {
+      "connect": {
+        "name": "Connect"
+      },
+      "disconnect": {
+        "name": "Disconnect"
+      }
+    }
   }
 }

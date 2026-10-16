@@ -10,6 +10,16 @@ from .coordinator import MiotBleCoordinator
 from .profile import PropertySpec
 
 
+def device_info(coordinator: MiotBleCoordinator) -> DeviceInfo:
+    """Build the shared Home Assistant device metadata."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, coordinator.address)},
+        manufacturer="Xiaomi",
+        model=coordinator.profile.name,
+        name=coordinator.entry.title,
+    )
+
+
 class MiotBleEntity(CoordinatorEntity[MiotBleCoordinator]):
     """Represent one MIoT property in Home Assistant."""
 
@@ -21,12 +31,12 @@ class MiotBleEntity(CoordinatorEntity[MiotBleCoordinator]):
         address = coordinator.address.replace(":", "").lower()
         self._attr_unique_id = f"{address}_{prop.siid}_{prop.piid}"
         self._attr_name = prop.name.replace("_", " ").title()
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, coordinator.address)},
-            manufacturer="Xiaomi",
-            model=coordinator.profile.name,
-            name=coordinator.entry.title,
-        )
+        self._attr_device_info = device_info(coordinator)
+
+    @property
+    def available(self) -> bool:
+        """Return whether the device property channel is connected."""
+        return super().available and self.coordinator.connected
 
     @property
     def property_value(self) -> int | bool | None:

@@ -43,6 +43,7 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
         self._session: MiotBleSession | None = None
         self._connection_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
+        self._manually_disconnected = False
         super().__init__(
             hass,
             _LOGGER,
@@ -59,10 +60,30 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
             self._session = None
             if session is not None:
                 session.cancel_background_tasks()
+            self.async_update_listeners()
+            if self._manually_disconnected:
+                return
             self.hass.async_create_task(
                 self.async_refresh(),
                 name=f"{DOMAIN}_reconnect_{self.address}",
             )
+
+    @property
+    def connected(self) -> bool:
+        """Return whether the authenticated property channel is usable."""
+        return bool(
+            not self._manually_disconnected
+            and self._client is not None
+            and self._client.is_connected
+            and self._session is not None
+            and self._session.authenticated
+            and self._session.receiver_running
+        )
+
+    @property
+    def manually_disconnected(self) -> bool:
+        """Return whether automatic reconnection is paused by the user."""
+        return self._manually_disconnected
 
     @property
     def _properties(self) -> tuple[PropertySpec, ...]:
@@ -82,13 +103,19 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
         self.async_set_updated_data(data)
 
     async def _ensure_session(self) -> MiotBleSession:
-        if self._session is not None and self._client is not None and self._client.is_connected:
+        if self._manually_disconnected:
+            raise ConnectionError("Bluetooth connection is manually disconnected")
+        if self.connected:
+            assert self._session is not None
             self._session.raise_if_receiver_failed()
             return self._session
         async with self._connection_lock:
-            if self._session is not None and self._client is not None and self._client.is_connected:
+            if self.connected:
+                assert self._session is not None
                 self._session.raise_if_receiver_failed()
                 return self._session
+            if self._session is not None or self._client is not None:
+                await self._drop_connection()
             ble_device = async_ble_device_from_address(self.hass, self.address)
             if ble_device is None:
                 raise ConnectionError(
@@ -110,6 +137,7 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
                     self._properties,
                     lambda values: self._handle_property_values(session, values),
                 )
+                self.async_update_listeners()
             except Exception:
                 if session is self._session:
                     self._session = None
@@ -120,6 +148,8 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
             return session
 
     async def _async_update_data(self) -> PropertyData:
+        if self._manually_disconnected:
+            return dict(self.data or {})
         try:
             session = await self._ensure_session()
             return {key: result.value for key, result in session.property_values.items()}
@@ -146,11 +176,29 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
                     if attempt:
                         raise
 
+    async def async_connect(self) -> None:
+        """Resume automatic connection management and connect now."""
+        self._manually_disconnected = False
+        try:
+            session = await self._ensure_session()
+        except Exception:
+            self.async_update_listeners()
+            raise
+        self.async_set_updated_data(
+            {key: result.value for key, result in session.property_values.items()}
+        )
+
+    async def async_disconnect(self) -> None:
+        """Disconnect and pause automatic reconnection."""
+        self._manually_disconnected = True
+        await self._drop_connection()
+
     async def _drop_connection(self) -> None:
         client = self._client
         session = self._session
         self._client = None
         self._session = None
+        self.async_update_listeners()
         if session is not None:
             await session.async_close()
         if client is not None and client.is_connected:

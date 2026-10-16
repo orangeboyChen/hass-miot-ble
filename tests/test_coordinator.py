@@ -51,6 +51,18 @@ async def test_update_and_set_property(hass) -> None:
     assert coordinator.data[(2, 1)] == 0
 
 
+def test_connected_requires_authenticated_receiver(hass) -> None:
+    coordinator = make_coordinator(hass)
+    coordinator._client = SimpleNamespace(is_connected=True)
+    coordinator._session = SimpleNamespace(authenticated=True, receiver_running=True)
+
+    assert coordinator.connected
+    assert not coordinator.manually_disconnected
+
+    coordinator._session.receiver_running = False
+    assert not coordinator.connected
+
+
 @pytest.mark.asyncio
 async def test_update_failure_drops_connection(hass) -> None:
     coordinator = make_coordinator(hass)
@@ -106,7 +118,11 @@ async def test_authentication_failure_requests_reauth(hass) -> None:
 @pytest.mark.asyncio
 async def test_ensure_session_reuses_connection(hass) -> None:
     coordinator = make_coordinator(hass)
-    existing = SimpleNamespace(raise_if_receiver_failed=MagicMock())
+    existing = SimpleNamespace(
+        authenticated=True,
+        receiver_running=True,
+        raise_if_receiver_failed=MagicMock(),
+    )
     coordinator._session = existing
     coordinator._client = SimpleNamespace(is_connected=True)
     assert await coordinator._ensure_session() is existing
@@ -147,6 +163,14 @@ async def test_ensure_session_connects_and_authenticates(hass) -> None:
 @pytest.mark.asyncio
 async def test_ensure_session_handles_offline_and_login_failure(hass) -> None:
     coordinator = make_coordinator(hass)
+    stale_client = SimpleNamespace(is_connected=True, disconnect=AsyncMock())
+    stale_session = SimpleNamespace(
+        authenticated=False,
+        receiver_running=False,
+        async_close=AsyncMock(),
+    )
+    coordinator._client = stale_client
+    coordinator._session = stale_session
     with (
         patch(
             "custom_components.miot_ble.coordinator.async_ble_device_from_address",
@@ -155,6 +179,8 @@ async def test_ensure_session_handles_offline_and_login_failure(hass) -> None:
         pytest.raises(ConnectionError, match="not in range"),
     ):
         await coordinator._ensure_session()
+    stale_session.async_close.assert_awaited_once()
+    stale_client.disconnect.assert_awaited_once()
 
     client = SimpleNamespace(is_connected=True, disconnect=AsyncMock())
     session = SimpleNamespace(
@@ -198,6 +224,14 @@ async def test_disconnect_drop_and_shutdown(hass) -> None:
     await hass.async_block_till_done()
     coordinator.async_refresh.assert_awaited_once()
 
+    coordinator.async_refresh.reset_mock()
+    coordinator._manually_disconnected = True
+    coordinator._client = client
+    coordinator._session = session
+    coordinator._disconnected(client)
+    await hass.async_block_till_done()
+    coordinator.async_refresh.assert_not_awaited()
+
     coordinator._client = client
     coordinator._session = session
     await coordinator._drop_connection()
@@ -208,6 +242,42 @@ async def test_disconnect_drop_and_shutdown(hass) -> None:
     coordinator._drop_connection = AsyncMock()
     await coordinator.async_shutdown()
     coordinator._drop_connection.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_manual_connection_controls(hass) -> None:
+    coordinator = make_coordinator(hass)
+    coordinator.async_set_updated_data({(2, 1): 0})
+    coordinator._manually_disconnected = True
+
+    assert await coordinator._async_update_data() == {(2, 1): 0}
+    with pytest.raises(ConnectionError, match="manually disconnected"):
+        await coordinator._ensure_session()
+
+    session = SimpleNamespace(property_values={(2, 1): PropertyValue(2, 1, ValueType.UINT8, 1)})
+    coordinator._ensure_session = AsyncMock(return_value=session)
+    await coordinator.async_connect()
+    assert not coordinator.manually_disconnected
+    assert coordinator.data == {(2, 1): 1}
+
+    coordinator._drop_connection = AsyncMock()
+    await coordinator.async_disconnect()
+    assert coordinator.manually_disconnected
+    coordinator._drop_connection.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_manual_connect_reports_failure(hass) -> None:
+    coordinator = make_coordinator(hass)
+    coordinator._manually_disconnected = True
+    coordinator._ensure_session = AsyncMock(side_effect=ConnectionError("offline"))
+    coordinator.async_update_listeners = MagicMock()
+
+    with pytest.raises(ConnectionError, match="offline"):
+        await coordinator.async_connect()
+
+    assert not coordinator.manually_disconnected
+    coordinator.async_update_listeners.assert_called_once()
 
 
 def test_property_notifications_update_only_active_session(hass) -> None:

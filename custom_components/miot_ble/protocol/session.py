@@ -128,7 +128,7 @@ class MiotBleSession:
         self._property_values: dict[tuple[int, int], PropertyValue] = {}
         self._property_callback: Callable[[tuple[PropertyValue, ...]], None] | None = None
         self._pending_responses: dict[
-            int, tuple[tuple[int, int], asyncio.Future[PropertyValue]]
+            int, tuple[tuple[int, int], int, asyncio.Future[PropertyValue]]
         ] = {}
         self._receiver_task: asyncio.Task[None] | None = None
         self._receiver_error: Exception | None = None
@@ -142,6 +142,15 @@ class MiotBleSession:
     def property_values(self) -> dict[tuple[int, int], PropertyValue]:
         """Return the latest property values received from the device."""
         return dict(self._property_values)
+
+    @property
+    def receiver_running(self) -> bool:
+        """Return whether the property notification receiver is active."""
+        return (
+            self._receiver_task is not None
+            and not self._receiver_task.done()
+            and self._receiver_error is None
+        )
 
     def _on_notify(self, sender: Any, data: bytearray) -> None:
         uuid = str(getattr(sender, "uuid", sender)).lower()
@@ -404,11 +413,13 @@ class MiotBleSession:
                     )
                     continue
                 self._record_properties(values)
-                pending_response = self._pending_responses.get(payload[2])
-                if pending_response is not None:
-                    expected_key, pending = pending_response
+                for expected_key, expected_value, pending in self._pending_responses.values():
                     for value in values:
-                        if value.key == expected_key and not pending.done():
+                        if (
+                            value.key == expected_key
+                            and value.value == expected_value
+                            and not pending.done()
+                        ):
                             pending.set_result(value)
                             break
         except asyncio.CancelledError:
@@ -431,7 +442,7 @@ class MiotBleSession:
         self._property_callback = None
         if task is not None:
             task.cancel()
-        for _, pending in self._pending_responses.values():
+        for _, _, pending in self._pending_responses.values():
             if not pending.done():
                 pending.set_exception(ConnectionError("Bluetooth session closed"))
         self._pending_responses.clear()
@@ -449,10 +460,15 @@ class MiotBleSession:
         async with self._command_lock:
             self.raise_if_receiver_failed()
             transaction_id = self._next_transaction_id()
+            normalized_value = prop.validate_value(value)
             request = build_set(transaction_id, prop, value)
             if self._receiver_task is not None:
                 pending = asyncio.get_running_loop().create_future()
-                self._pending_responses[transaction_id] = (prop.key, pending)
+                self._pending_responses[transaction_id] = (
+                    prop.key,
+                    normalized_value,
+                    pending,
+                )
                 try:
                     await self._send_request(request)
                     try:
