@@ -15,6 +15,7 @@ from custom_components.miot_ble.cloud import (
     XiaomiCloudClient,
     XiaomiCloudDeviceTokenUnavailableError,
     XiaomiCloudError,
+    XiaomiCloudSession,
     XiaomiCloudSessionError,
     XiaomiCloudVerificationError,
     XiaomiCloudVerificationRequiredError,
@@ -88,6 +89,12 @@ async def test_password_login_success() -> None:
 
     assert client.userId == "123"
     assert client._serviceToken == "TOKEN"
+    cloud_session = client.export_session()
+    assert cloud_session.username == "user@example.com"
+    assert cloud_session.user_id == "123"
+    assert cloud_session.service_token == "TOKEN"
+    assert cloud_session.ssecurity == base64.b64encode(b"security").decode()
+    assert "password" not in cloud_session.as_dict()
     submitted = session.post.await_args.kwargs["data"]
     assert submitted["user"] == "user@example.com"
     assert submitted["hash"] == "5EBE2294ECD0E0F08EAB7690D2A6EE69"
@@ -368,3 +375,70 @@ def test_owned_session_is_detached_when_secrets_are_cleared() -> None:
     client.clear_sensitive_data()
     client.clear_sensitive_data()
     session.detach.assert_called_once_with()
+
+
+def test_cloud_session_round_trip_and_restored_client() -> None:
+    cloud_session = XiaomiCloudSession(
+        username="user@example.com",
+        user_id="123",
+        service_token="SERVICE",
+        ssecurity=base64.b64encode(b"security").decode(),
+        device_id="ABCDEF1234567890",
+    )
+    assert cloud_session.account_id == "123"
+    assert cloud_session.display_name == "user@example.com (123)"
+    assert XiaomiCloudSession.from_dict(cloud_session.as_dict()) == cloud_session
+
+    http_session = SimpleNamespace(detach=MagicMock())
+    client = XiaomiCloudClient.from_session(cloud_session, http_session, owns_session=True)
+    assert client._username == "user@example.com"
+    assert client._password == ""
+    assert client.userId == "123"
+    assert client._serviceToken == "SERVICE"
+    assert client._ssecurity == cloud_session.ssecurity
+    assert client._device_id == "ABCDEF1234567890"
+    assert client._cookies["deviceId"] == "ABCDEF1234567890"
+    assert client.export_session() == cloud_session
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {},
+        {"username": "user"},
+        {
+            "username": "user",
+            "user_id": "123",
+            "service_token": "SERVICE",
+            "ssecurity": "not-base64",
+            "device_id": "ABCDEF1234567890",
+        },
+        {
+            "username": "user",
+            "user_id": "123",
+            "service_token": "SERVICE",
+            "ssecurity": base64.b64encode(b"security").decode(),
+            "device_id": "bad id",
+        },
+    ],
+)
+def test_cloud_session_rejects_invalid_storage(data: object) -> None:
+    with pytest.raises(ValueError):
+        XiaomiCloudSession.from_dict(data)
+
+
+def test_export_rejects_incomplete_cloud_session() -> None:
+    client, _ = client_with_session()
+    with pytest.raises(XiaomiCloudSessionError, match="incomplete"):
+        client.export_session()
+
+
+def test_cloud_session_display_name_avoids_duplicate_user_id() -> None:
+    cloud_session = XiaomiCloudSession(
+        username="123",
+        user_id="123",
+        service_token="SERVICE",
+        ssecurity=base64.b64encode(b"security").decode(),
+        device_id="ABCDEF",
+    )
+    assert cloud_session.display_name == "123"

@@ -30,6 +30,7 @@ from .cloud import (
     XiaomiCloudVerificationError,
     XiaomiCloudVerificationRequiredError,
 )
+from .cloud_store import get_cloud_account_store
 from .const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
 from .profile import DeviceProfile
 from .profiles import get_profile, profile_for_product_id
@@ -37,6 +38,8 @@ from .protocol import AuthenticationError, MiotBleSession
 
 _LOGGER = logging.getLogger(__name__)
 _TOKEN_PATTERN = re.compile(r"[0-9a-fA-F]{24}")
+CONF_CLOUD_ACCOUNT = "cloud_account"
+CLOUD_ACCOUNT_ADD = "__add_account__"
 
 
 class CloudDeviceNotFoundError(Exception):
@@ -176,7 +179,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             }
             await self.async_set_unique_id(address, raise_on_progress=False)
             self._abort_if_unique_id_configured()
-            return await self.async_step_cloud_auth()
+            return await self.async_step_cloud_account()
 
         values = user_input or {}
         address_default = self._discovered_address or values.get(CONF_ADDRESS, "")
@@ -194,6 +197,61 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_cloud_account(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose a reusable Xiaomi Cloud session or add another account."""
+        if self._pending_setup is None:
+            return self.async_abort(reason="missing_setup_data")
+        accounts = await get_cloud_account_store(self.hass).async_list()
+        if not accounts:
+            return await self.async_step_cloud_auth()
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            account_id = str(user_input[CONF_CLOUD_ACCOUNT])
+            if account_id == CLOUD_ACCOUNT_ADD:
+                return await self.async_step_cloud_auth()
+            cloud_session = await get_cloud_account_store(self.hass).async_get(account_id)
+            if cloud_session is None:
+                errors["base"] = "cloud_saved_session_missing"
+            else:
+                self._clear_cloud_client()
+                self._cloud_client = XiaomiCloudClient.from_session(
+                    cloud_session,
+                    self._create_cloud_http_session(),
+                    owns_session=True,
+                )
+                try:
+                    token = await async_fetch_cloud_token(
+                        self._cloud_client,
+                        self._pending_setup[CONF_ADDRESS],
+                    )
+                except XiaomiCloudAuthenticationError, XiaomiCloudSessionError:
+                    await get_cloud_account_store(self.hass).async_remove(account_id)
+                    self._clear_cloud_client()
+                    return await self._async_show_cloud_account(
+                        {"base": "cloud_saved_session_expired"}
+                    )
+                except CloudDeviceNotFoundError:
+                    errors["base"] = "cloud_device_not_found"
+                except XiaomiCloudDeviceTokenUnavailableError:
+                    errors["base"] = "cloud_token_unavailable"
+                except (aiohttp.ClientError, TimeoutError, XiaomiCloudError) as error:
+                    _LOGGER.debug("Unable to query Xiaomi Cloud with a saved session: %s", error)
+                    errors["base"] = "cloud_error"
+                except ValueError:
+                    errors["base"] = "cloud_key_unsupported"
+                else:
+                    result, error = await self._async_finish_setup(token)
+                    self._clear_cloud_client()
+                    if result is not None:
+                        return result
+                    errors["base"] = error
+                self._clear_cloud_client()
+
+        return await self._async_show_cloud_account(errors)
+
     async def async_step_cloud_auth(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -206,11 +264,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             self._cloud_client = XiaomiCloudClient(
                 str(user_input[CONF_USERNAME]),
                 str(user_input[CONF_PASSWORD]),
-                async_create_clientsession(
-                    self.hass,
-                    auto_cleanup=False,
-                    cookie_jar=aiohttp.DummyCookieJar(),
-                ),
+                self._create_cloud_http_session(),
                 owns_session=True,
             )
             try:
@@ -327,14 +381,24 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
         assert self._pending_setup is not None
         assert self._cloud_client is not None
         try:
+            cloud_session = self._cloud_client.export_session()
+            await get_cloud_account_store(self.hass).async_save(cloud_session)
+        except (OSError, ValueError, XiaomiCloudSessionError) as store_error:
+            _LOGGER.warning("Unable to save the Xiaomi Cloud session: %s", store_error)
+            self._clear_cloud_client()
+            return self._show_cloud_auth({"base": "cloud_session_storage_error"})
+
+        try:
             token = await async_fetch_cloud_token(
                 self._cloud_client,
                 self._pending_setup[CONF_ADDRESS],
             )
         except XiaomiCloudAuthenticationError as auth_error:
+            await get_cloud_account_store(self.hass).async_remove(cloud_session.account_id)
             error = self._cloud_auth_error_key(auth_error)
         except XiaomiCloudSessionError as session_error:
             _LOGGER.warning("Xiaomi Cloud API session failed: %s", session_error)
+            await get_cloud_account_store(self.hass).async_remove(cloud_session.account_id)
             error = "cloud_session_error"
         except CloudDeviceNotFoundError:
             error = "cloud_device_not_found"
@@ -352,7 +416,30 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                 return result
 
         self._clear_cloud_client()
-        return self._show_cloud_auth({"base": error})
+        return await self._async_show_cloud_account({"base": error})
+
+    async def _async_show_cloud_account(self, errors: dict[str, str]) -> ConfigFlowResult:
+        """Show saved Xiaomi accounts and an option to add another account."""
+        assert self._pending_setup is not None
+        accounts = await get_cloud_account_store(self.hass).async_list()
+        if not accounts:
+            return self._show_cloud_auth(errors)
+        options = {account.account_id: account.display_name for account in accounts}
+        options[CLOUD_ACCOUNT_ADD] = "+ Add Xiaomi account / 新增小米账号"
+        return self.async_show_form(
+            step_id="cloud_account",
+            data_schema=vol.Schema({vol.Required(CONF_CLOUD_ACCOUNT): vol.In(options)}),
+            errors=errors,
+            description_placeholders={"name": self._pending_setup[CONF_NAME]},
+        )
+
+    def _create_cloud_http_session(self) -> aiohttp.ClientSession:
+        """Create an isolated HTTP session for one Xiaomi account attempt."""
+        return async_create_clientsession(
+            self.hass,
+            auto_cleanup=False,
+            cookie_jar=aiohttp.DummyCookieJar(),
+        )
 
     def _show_cloud_auth(self, errors: dict[str, str]) -> ConfigFlowResult:
         """Show the Xiaomi account form without persisting its values."""
@@ -435,4 +522,4 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_MODEL: str(entry.data[CONF_MODEL]),
             CONF_NAME: str(entry.data.get(CONF_NAME) or entry.title),
         }
-        return await self.async_step_cloud_auth()
+        return await self.async_step_cloud_account()

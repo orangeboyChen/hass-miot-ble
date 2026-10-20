@@ -66,11 +66,11 @@ near a Bluetooth adapter or proxy, and advertising.
 2. Select **Add integration** and search for **Xiaomi MIoT BLE**.
 3. Select a supported nearby device and optionally set a display name. Devices
    without an implemented profile are not listed.
-4. Sign in with the Xiaomi account that owns the device. Home Assistant reads
-   the device's 12-byte Standard Auth token from Xiaomi Cloud. This token is
-   distinct from the MiBeacon broadcast bindkey used by the official Xiaomi BLE
-   integration. The account credentials are sent directly to Xiaomi Cloud
-   during setup and are not stored in the config entry.
+4. If a saved Xiaomi account session exists, choose it or select **Add Xiaomi
+   account**. Otherwise, sign in with the Xiaomi account that owns the device.
+   Home Assistant reads the device's 12-byte Standard Auth token from Xiaomi
+   Cloud. This token is distinct from the MiBeacon broadcast bindkey used by the
+   official Xiaomi BLE integration.
 5. If Xiaomi requests an image captcha, enter the characters shown in Home
    Assistant. If Xiaomi requests account verification, open the supplied Xiaomi
    page and request a phone or email verification code. Do not submit the code
@@ -79,6 +79,13 @@ near a Bluetooth adapter or proxy, and advertising.
    afterward.
 6. The integration connects to the device and authenticates before it saves the
    config entry.
+
+The Xiaomi account password is used only for interactive sign-in and is never
+stored. The resulting `serviceToken`, `ssecurity`, Xiaomi user ID, and generated
+client device ID are saved in Home Assistant's local storage so the session can
+be reused when another supported device is added. If Xiaomi explicitly rejects
+a saved session, the integration removes it and asks for another saved account
+or a new sign-in. Transient network failures do not delete saved sessions.
 
 The YB01 and YB11 profiles expose their supported power, mode, time, heating,
 and battery properties. If setup reports that the device cannot be reached,

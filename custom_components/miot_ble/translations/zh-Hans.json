@@ -12,10 +12,17 @@
       },
       "cloud_auth": {
         "title": "连接小米账号",
-        "description": "登录以为 {name} 准备本地蓝牙访问。账号密码仅在配置过程中使用，不会保存在 Home Assistant 中。",
+        "description": "登录小米账号，为 {name} 自动准备本地蓝牙访问。密码只在设置过程中使用，不会保存；登录后的小米云会话会保存在本地，以便添加其他设备时复用。",
         "data": {
           "username": "小米账号",
           "password": "密码"
+        }
+      },
+      "cloud_account": {
+        "title": "选择小米账号",
+        "description": "为 {name} 使用已保存的小米云会话，或新增另一个小米账号。",
+        "data": {
+          "cloud_account": "小米账号"
         }
       },
       "cloud_captcha": {
@@ -41,6 +48,9 @@
       "cloud_invalid_password": "小米拒绝了密码（错误 70016）",
       "cloud_verification_required": "小米要求额外的账号安全验证（错误 81003），请先在小米之家或小米账号网页完成验证，然后重试",
       "cloud_session_error": "账号登录成功，但小米没有建立可用的云会话",
+      "cloud_session_storage_error": "无法在本地保存小米云会话",
+      "cloud_saved_session_missing": "所选的已保存小米账号已不存在",
+      "cloud_saved_session_expired": "小米拒绝了已保存的账号会话，该会话已删除；请重新登录或选择其他账号",
       "cloud_invalid_captcha": "小米云拒绝了验证码，请根据刷新后的图片重试",
       "cloud_invalid_verification": "小米云拒绝了验证码",
       "cloud_device_not_found": "该小米账号中没有找到此蓝牙设备",

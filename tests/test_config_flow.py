@@ -1,5 +1,6 @@
 """Tests for the Xiaomi MIoT BLE config flow."""
 
+import base64
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,11 +16,15 @@ from custom_components.miot_ble.cloud import (
     XiaomiCloudCaptchaRequiredError,
     XiaomiCloudDeviceTokenUnavailableError,
     XiaomiCloudError,
+    XiaomiCloudSession,
     XiaomiCloudSessionError,
     XiaomiCloudVerificationError,
     XiaomiCloudVerificationRequiredError,
 )
+from custom_components.miot_ble.cloud_store import get_cloud_account_store
 from custom_components.miot_ble.config_flow import (
+    CLOUD_ACCOUNT_ADD,
+    CONF_CLOUD_ACCOUNT,
     CloudDeviceNotFoundError,
     MiotBleConfigFlow,
     _discovered_devices,
@@ -39,6 +44,13 @@ from custom_components.miot_ble.protocol import AuthenticationError
 ADDRESS = "AA:BB:CC:DD:EE:FF"
 TOKEN = "00112233445566778899aabb"
 MODEL = "muxnw.dryer.m73"
+CLOUD_SESSION = XiaomiCloudSession(
+    username="user@example.com",
+    user_id="123",
+    service_token="SERVICE",
+    ssecurity=base64.b64encode(b"security").decode(),
+    device_id="ABCDEF1234567890",
+)
 
 
 def discovery_info(
@@ -147,7 +159,118 @@ async def test_user_flow_routes_missing_token_to_cloud(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> None:
+async def test_user_flow_offers_saved_account_or_new_login(hass) -> None:
+    await get_cloud_account_store(hass).async_save(CLOUD_SESSION)
+    flow = config_flow(hass, SOURCE_USER)
+    with patch(
+        "custom_components.miot_ble.config_flow._discovered_devices",
+        return_value=supported_devices(),
+    ):
+        result = await flow.async_step_user({CONF_ADDRESS: ADDRESS, CONF_NAME: "Dryer"})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "cloud_account"
+    options = result["data_schema"].schema[next(iter(result["data_schema"].schema))].container
+    assert options[CLOUD_SESSION.account_id] == CLOUD_SESSION.display_name
+    assert CLOUD_ACCOUNT_ADD in options
+
+    result = await flow.async_step_cloud_account({CONF_CLOUD_ACCOUNT: CLOUD_ACCOUNT_ADD})
+    assert result["step_id"] == "cloud_auth"
+
+
+@pytest.mark.asyncio
+async def test_saved_account_fetches_device_token_without_password(hass) -> None:
+    await get_cloud_account_store(hass).async_save(CLOUD_SESSION)
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    client = SimpleNamespace(
+        async_get_device_token=AsyncMock(return_value=TOKEN),
+        clear_sensitive_data=MagicMock(),
+    )
+    with (
+        patch(
+            "custom_components.miot_ble.config_flow.XiaomiCloudClient.from_session",
+            return_value=client,
+        ) as from_session,
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
+        patch(
+            "custom_components.miot_ble.config_flow.async_validate_connection",
+            new=AsyncMock(),
+        ),
+    ):
+        result = await flow.async_step_cloud_account({CONF_CLOUD_ACCOUNT: CLOUD_SESSION.account_id})
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_TOKEN] == TOKEN
+    from_session.assert_called_once()
+    client.async_get_device_token.assert_awaited_once_with(ADDRESS)
+    client.clear_sensitive_data.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_rejected_saved_account_is_removed(hass) -> None:
+    store = get_cloud_account_store(hass)
+    await store.async_save(CLOUD_SESSION)
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    client = SimpleNamespace(clear_sensitive_data=MagicMock())
+    with (
+        patch(
+            "custom_components.miot_ble.config_flow.XiaomiCloudClient.from_session",
+            return_value=client,
+        ),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
+        patch(
+            "custom_components.miot_ble.config_flow.async_fetch_cloud_token",
+            new=AsyncMock(side_effect=XiaomiCloudSessionError("expired")),
+        ),
+    ):
+        result = await flow.async_step_cloud_account({CONF_CLOUD_ACCOUNT: CLOUD_SESSION.account_id})
+
+    assert result["step_id"] == "cloud_auth"
+    assert result["errors"]["base"] == "cloud_saved_session_expired"
+    assert await store.async_get(CLOUD_SESSION.account_id) is None
+
+
+@pytest.mark.asyncio
+async def test_transient_saved_account_error_does_not_remove_session(hass) -> None:
+    store = get_cloud_account_store(hass)
+    await store.async_save(CLOUD_SESSION)
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    client = SimpleNamespace(clear_sensitive_data=MagicMock())
+    with (
+        patch(
+            "custom_components.miot_ble.config_flow.XiaomiCloudClient.from_session",
+            return_value=client,
+        ),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
+        patch(
+            "custom_components.miot_ble.config_flow.async_fetch_cloud_token",
+            new=AsyncMock(side_effect=XiaomiCloudError("offline")),
+        ),
+    ):
+        result = await flow.async_step_cloud_account({CONF_CLOUD_ACCOUNT: CLOUD_SESSION.account_id})
+
+    assert result["step_id"] == "cloud_account"
+    assert result["errors"]["base"] == "cloud_error"
+    assert await store.async_get(CLOUD_SESSION.account_id) == CLOUD_SESSION
+
+
+@pytest.mark.asyncio
+async def test_cloud_flow_fetches_token_and_stores_session_without_password(hass) -> None:
     flow = config_flow(hass, SOURCE_USER)
     with patch(
         "custom_components.miot_ble.config_flow._discovered_devices",
@@ -162,6 +285,7 @@ async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> Non
         clear_sensitive_data=MagicMock(),
         captcha_image=None,
         verification_url=None,
+        export_session=MagicMock(return_value=CLOUD_SESSION),
     )
     validate = AsyncMock()
     with (
@@ -176,10 +300,43 @@ async def test_cloud_flow_fetches_token_without_storing_credentials(hass) -> Non
     assert result["data"][CONF_TOKEN] == TOKEN
     assert "username" not in result["data"]
     assert "password" not in result["data"]
+    saved = await get_cloud_account_store(hass).async_get(CLOUD_SESSION.account_id)
+    assert saved == CLOUD_SESSION
+    assert "password" not in saved.as_dict()
     client.async_login.assert_awaited_once_with()
     client.async_get_device_token.assert_awaited_once_with(ADDRESS)
     client.clear_sensitive_data.assert_called_once_with()
     validate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cloud_flow_reports_local_session_storage_failure(hass) -> None:
+    flow = config_flow(hass, SOURCE_USER)
+    flow._pending_setup = {
+        CONF_ADDRESS: ADDRESS,
+        CONF_MODEL: MODEL,
+        CONF_NAME: "Dryer",
+    }
+    client = SimpleNamespace(
+        async_login=AsyncMock(),
+        clear_sensitive_data=MagicMock(),
+        captcha_image=None,
+        verification_url=None,
+        export_session=MagicMock(return_value=CLOUD_SESSION),
+    )
+    store = get_cloud_account_store(hass)
+    with (
+        patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
+        patch("custom_components.miot_ble.config_flow.async_create_clientsession"),
+        patch.object(store, "async_save", new=AsyncMock(side_effect=OSError("disk full"))),
+    ):
+        result = await flow.async_step_cloud_auth(
+            {"username": "user@example.com", "password": "secret"}
+        )
+
+    assert result["step_id"] == "cloud_auth"
+    assert result["errors"]["base"] == "cloud_session_storage_error"
+    client.clear_sensitive_data.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -207,6 +364,7 @@ async def test_cloud_flow_reports_device_connection_failure(
         clear_sensitive_data=MagicMock(),
         captcha_image=None,
         verification_url=None,
+        export_session=MagicMock(return_value=CLOUD_SESSION),
     )
     with (
         patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
@@ -251,6 +409,7 @@ async def test_cloud_login_reports_specific_failure(
         clear_sensitive_data=MagicMock(),
         captcha_image=None,
         verification_url=None,
+        export_session=MagicMock(return_value=CLOUD_SESSION),
     )
     with (
         patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
@@ -301,6 +460,7 @@ async def test_cloud_flow_errors(hass, cloud_error: Exception, expected_error: s
         clear_sensitive_data=MagicMock(),
         captcha_image=None,
         verification_url=None,
+        export_session=MagicMock(return_value=CLOUD_SESSION),
     )
     with (
         patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
@@ -377,6 +537,7 @@ async def test_cloud_flow_routes_captcha_and_accepts_answer(hass) -> None:
         clear_sensitive_data=MagicMock(),
         captcha_image="IMAGE",
         verification_url=None,
+        export_session=MagicMock(return_value=CLOUD_SESSION),
     )
     with (
         patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
@@ -433,6 +594,7 @@ async def test_cloud_flow_routes_verification_and_retries_ticket(hass) -> None:
         clear_sensitive_data=MagicMock(),
         captcha_image=None,
         verification_url=challenge.url,
+        export_session=MagicMock(return_value=CLOUD_SESSION),
     )
     with (
         patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),
@@ -533,6 +695,7 @@ async def test_reauth_retrieves_and_updates_local_key(hass) -> None:
         clear_sensitive_data=MagicMock(),
         captcha_image=None,
         verification_url=None,
+        export_session=MagicMock(return_value=CLOUD_SESSION),
     )
     with (
         patch("custom_components.miot_ble.config_flow.XiaomiCloudClient", return_value=client),

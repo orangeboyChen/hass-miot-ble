@@ -12,10 +12,17 @@
       },
       "cloud_auth": {
         "title": "Connect your Xiaomi account",
-        "description": "Sign in to prepare local Bluetooth access for {name}. The credentials are used only during setup and are not stored in Home Assistant.",
+        "description": "Sign in to prepare local Bluetooth access for {name}. The password is used only during setup and is not stored. The resulting Xiaomi Cloud session is stored locally so it can be reused for other devices.",
         "data": {
           "username": "Xiaomi account",
           "password": "Password"
+        }
+      },
+      "cloud_account": {
+        "title": "Choose a Xiaomi account",
+        "description": "Use a saved Xiaomi Cloud session for {name}, or add another Xiaomi account.",
+        "data": {
+          "cloud_account": "Xiaomi account"
         }
       },
       "cloud_captcha": {
@@ -41,6 +48,9 @@
       "cloud_invalid_password": "Xiaomi rejected the password (error 70016)",
       "cloud_verification_required": "Xiaomi requires additional account verification (error 81003). Complete the security check in Xiaomi Home or the Xiaomi account website, then try again",
       "cloud_session_error": "Account sign-in succeeded, but Xiaomi did not create a usable cloud session",
+      "cloud_session_storage_error": "The Xiaomi Cloud session could not be saved locally",
+      "cloud_saved_session_missing": "The selected saved Xiaomi account no longer exists",
+      "cloud_saved_session_expired": "Xiaomi rejected the saved account session. It was removed; sign in again or choose another account",
       "cloud_invalid_captcha": "Xiaomi Cloud rejected the captcha; try the refreshed image",
       "cloud_invalid_verification": "Xiaomi Cloud rejected the verification code",
       "cloud_device_not_found": "The Bluetooth device was not found in this Xiaomi account",

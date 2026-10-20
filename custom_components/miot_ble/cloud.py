@@ -8,6 +8,7 @@ import json
 import secrets
 import string
 import time
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -62,6 +63,71 @@ class XiaomiCloudDeviceTokenUnavailableError(XiaomiCloudError):
     """Raised when a BLE device has no Standard Auth token in Xiaomi Cloud."""
 
 
+@dataclass(frozen=True, slots=True)
+class XiaomiCloudSession:
+    """Persistable Xiaomi Cloud session without the account password."""
+
+    username: str
+    user_id: str
+    service_token: str
+    ssecurity: str
+    device_id: str
+
+    def __post_init__(self) -> None:
+        """Reject incomplete or malformed stored sessions."""
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                self.username,
+                self.user_id,
+                self.service_token,
+                self.ssecurity,
+                self.device_id,
+            )
+        ):
+            raise ValueError("Xiaomi Cloud session fields must not be empty")
+        if not self.device_id.isalnum() or not 6 <= len(self.device_id) <= 32:
+            raise ValueError("Xiaomi Cloud device ID is invalid")
+        try:
+            security = base64.b64decode(self.ssecurity, validate=True)
+        except ValueError as error:
+            raise ValueError("Xiaomi Cloud security value is invalid") from error
+        if not security:
+            raise ValueError("Xiaomi Cloud security value is invalid")
+
+    @property
+    def account_id(self) -> str:
+        """Return the stable key used by the local account store."""
+        return self.user_id
+
+    @property
+    def display_name(self) -> str:
+        """Return an account label suitable for a config-flow selector."""
+        if self.username == self.user_id:
+            return self.username
+        return f"{self.username} ({self.user_id})"
+
+    def as_dict(self) -> dict[str, str]:
+        """Serialize the session for Home Assistant storage."""
+        return {
+            "username": self.username,
+            "user_id": self.user_id,
+            "service_token": self.service_token,
+            "ssecurity": self.ssecurity,
+            "device_id": self.device_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> XiaomiCloudSession:
+        """Restore and validate a session from Home Assistant storage."""
+        if not isinstance(data, dict):
+            raise ValueError("Stored Xiaomi Cloud session must be an object")
+        fields = ("username", "user_id", "service_token", "ssecurity", "device_id")
+        if any(not isinstance(data.get(field), str) for field in fields):
+            raise ValueError("Stored Xiaomi Cloud session is incomplete")
+        return cls(**{field: data[field] for field in fields})
+
+
 class XiaomiCloudClient(XiaomiCloudConnector):
     """Authenticate interactively and retrieve a BLE Standard Auth token.
 
@@ -95,6 +161,40 @@ class XiaomiCloudClient(XiaomiCloudConnector):
         self._captcha_ick: str | None = None
         self.verification_url: str | None = None
         self._identity_session: str | None = None
+
+    @classmethod
+    def from_session(
+        cls,
+        cloud_session: XiaomiCloudSession,
+        session: aiohttp.ClientSession,
+        *,
+        owns_session: bool = False,
+    ) -> XiaomiCloudClient:
+        """Build a cloud client from a previously authenticated session."""
+        client = cls(cloud_session.username, "", session, owns_session=owns_session)
+        client._device_id = cloud_session.device_id
+        client._agent = MIOT_USER_AGENT.format(client_id=client._device_id)
+        client._cookies = {
+            "sdkVersion": "3.8.6",
+            "deviceId": client._device_id,
+        }
+        client._account_cookies = dict(client._cookies)
+        client.userId = cloud_session.user_id
+        client._serviceToken = cloud_session.service_token
+        client._ssecurity = cloud_session.ssecurity
+        return client
+
+    def export_session(self) -> XiaomiCloudSession:
+        """Return the authenticated fields needed for future cloud calls."""
+        if not self.userId or not self._serviceToken or not self._ssecurity:
+            raise XiaomiCloudSessionError("Xiaomi Cloud session is incomplete")
+        return XiaomiCloudSession(
+            username=self._username,
+            user_id=str(self.userId),
+            service_token=self._serviceToken,
+            ssecurity=self._ssecurity,
+            device_id=self._device_id,
+        )
 
     async def async_login(
         self,
