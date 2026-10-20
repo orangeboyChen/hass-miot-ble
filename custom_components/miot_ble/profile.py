@@ -7,7 +7,7 @@ from enum import IntEnum, StrEnum
 
 
 class ValueType(IntEnum):
-    """MIoT value types used by the encrypted BLE property protocol."""
+    """Miot value types used by the encrypted BLE property protocol."""
 
     BOOL = 0x00
     UINT8 = 0x10
@@ -57,7 +57,7 @@ class EntityKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PropertySpec:
-    """Describe one MIoT property exposed by a device."""
+    """Describe one Miot property exposed by a device."""
 
     name: str
     siid: int
@@ -99,7 +99,7 @@ class PropertySpec:
 
     @property
     def key(self) -> tuple[int, int]:
-        """Return the MIoT property identifier."""
+        """Return the Miot property identifier."""
         return self.siid, self.piid
 
     def validate_value(self, value: int | bool) -> int:
@@ -135,7 +135,7 @@ class PropertySpec:
 
 @dataclass(frozen=True, slots=True)
 class DeviceProfile:
-    """Describe a Xiaomi BLE model and its MIoT properties."""
+    """Describe a Xiaomi BLE model and its Miot properties."""
 
     model: str
     name: str
@@ -154,7 +154,7 @@ class DeviceProfile:
             raise ValueError("Profile contains duplicate SIID/PIID pairs")
 
     def property(self, siid: int, piid: int) -> PropertySpec:
-        """Return a property by its MIoT identifier."""
+        """Return a property by its Miot identifier."""
         try:
             return next(prop for prop in self.properties if prop.key == (siid, piid))
         except StopIteration as error:

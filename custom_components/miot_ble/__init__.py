@@ -1,4 +1,4 @@
-"""Xiaomi MIoT BLE integration."""
+"""Xiaomi Miot BLE integration."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from .const import PLATFORMS
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up a MIoT BLE config entry."""
+    """Set up a Miot BLE config entry."""
     from .coordinator import MiotBleCoordinator
 
     coordinator = MiotBleCoordinator(hass, entry)
@@ -20,7 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a MIoT BLE config entry."""
+    """Unload a Miot BLE config entry."""
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
     await entry.runtime_data.async_shutdown()

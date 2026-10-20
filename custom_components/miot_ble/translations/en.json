@@ -1,9 +1,9 @@
 {
-  "title": "Xiaomi MIoT BLE",
+  "title": "Xiaomi Miot BLE",
   "config": {
     "step": {
       "user": {
-        "title": "Add a Xiaomi MIoT BLE device",
+        "title": "Add a Xiaomi Miot BLE device",
         "description": "Select a supported nearby device. Home Assistant will prepare local Bluetooth access automatically.",
         "data": {
           "address": "Bluetooth device",

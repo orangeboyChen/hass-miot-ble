@@ -1,9 +1,9 @@
 [简体中文](README_zh.md)
 
-# Xiaomi MIoT BLE for Home Assistant
+# Xiaomi Miot BLE for Home Assistant
 
 `hass-miot-ble` is a Home Assistant custom integration for controlling supported
-Xiaomi MIoT Bluetooth Low Energy devices locally.
+Xiaomi Miot Bluetooth Low Energy devices locally.
 
 ## Supported devices
 
@@ -23,7 +23,7 @@ Disconnect buttons.
 1. Open **HACS** > **Integrations**.
 2. Open the three-dot menu and select **Custom repositories**.
 3. Add `https://github.com/orangeboyChen/hass-miot-ble` as an **Integration**.
-4. Install **Xiaomi MIoT BLE** and restart Home Assistant.
+4. Install **Xiaomi Miot BLE** and restart Home Assistant.
 
 ### Manual installation
 
@@ -35,5 +35,5 @@ Home Assistant configuration directory, then restart Home Assistant.
 1. Make sure Home Assistant has access to a Bluetooth adapter or Bluetooth
    proxy and the device is nearby.
 2. Open **Settings** > **Devices & services** > **Add integration**.
-3. Search for **Xiaomi MIoT BLE** and select a supported device.
+3. Search for **Xiaomi Miot BLE** and select a supported device.
 4. Sign in to the Xiaomi account that owns the device when prompted.

@@ -1,4 +1,4 @@
-"""Connection and update coordinator for Xiaomi MIoT BLE."""
+"""Connection and update coordinator for Xiaomi Miot BLE."""
 
 from __future__ import annotations
 

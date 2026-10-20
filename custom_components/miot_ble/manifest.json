@@ -1,6 +1,6 @@
 {
   "domain": "miot_ble",
-  "name": "Xiaomi MIoT BLE",
+  "name": "Xiaomi Miot BLE",
   "bluetooth": [
     {
       "connectable": true,

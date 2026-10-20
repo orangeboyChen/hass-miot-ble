@@ -1,4 +1,4 @@
-"""Tests for the Xiaomi Standard Auth and MIoT BLE session."""
+"""Tests for the Xiaomi Standard Auth and Miot BLE session."""
 
 from __future__ import annotations
 

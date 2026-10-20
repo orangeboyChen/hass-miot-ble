@@ -1,4 +1,4 @@
-"""Tests for the MIoT property TLV codec."""
+"""Tests for the Miot property TLV codec."""
 
 import pytest
 

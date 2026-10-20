@@ -1,4 +1,4 @@
-"""Built-in Xiaomi MIoT BLE device profiles."""
+"""Built-in Xiaomi Miot BLE device profiles."""
 
 from __future__ import annotations
 

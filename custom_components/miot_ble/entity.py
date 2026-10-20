@@ -1,4 +1,4 @@
-"""Shared Xiaomi MIoT BLE entity implementation."""
+"""Shared Xiaomi Miot BLE entity implementation."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def device_info(coordinator: MiotBleCoordinator) -> DeviceInfo:
 
 
 class MiotBleEntity(CoordinatorEntity[MiotBleCoordinator]):
-    """Represent one MIoT property in Home Assistant."""
+    """Represent one Miot property in Home Assistant."""
 
     _attr_has_entity_name = True
 

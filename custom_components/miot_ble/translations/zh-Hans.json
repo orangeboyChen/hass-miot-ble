@@ -1,9 +1,9 @@
 {
-  "title": "小米 MIoT 蓝牙",
+  "title": "小米 Miot 蓝牙",
   "config": {
     "step": {
       "user": {
-        "title": "添加小米 MIoT 蓝牙设备",
+        "title": "添加小米 Miot 蓝牙设备",
         "description": "选择附近的受支持设备，Home Assistant 将自动准备本地蓝牙访问。",
         "data": {
           "address": "蓝牙设备",

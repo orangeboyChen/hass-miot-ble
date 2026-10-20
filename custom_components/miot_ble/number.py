@@ -1,4 +1,4 @@
-"""Number entities for Xiaomi MIoT BLE."""
+"""Number entities for Xiaomi Miot BLE."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ async def async_setup_entry(
 
 
 class MiotBleNumber(MiotBleEntity, NumberEntity):
-    """Control a bounded numeric MIoT property."""
+    """Control a bounded numeric Miot property."""
 
     def __init__(self, coordinator: MiotBleCoordinator, prop: PropertySpec) -> None:
         super().__init__(coordinator, prop)

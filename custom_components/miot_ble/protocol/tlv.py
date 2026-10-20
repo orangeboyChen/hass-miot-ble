@@ -1,4 +1,4 @@
-"""MIoT property TLV encoder and decoder."""
+"""Miot property TLV encoder and decoder."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ MIOT_CHANNEL = 0x20
 
 
 class Operation(IntEnum):
-    """MIoT BLE property operations."""
+    """Miot BLE property operations."""
 
     SET = 0x00
     READ = 0x01
@@ -23,7 +23,7 @@ class Operation(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class PropertyValue:
-    """A decoded MIoT property value."""
+    """A decoded Miot property value."""
 
     siid: int
     piid: int
@@ -32,7 +32,7 @@ class PropertyValue:
 
     @property
     def key(self) -> tuple[int, int]:
-        """Return the MIoT property identifier."""
+        """Return the Miot property identifier."""
         return self.siid, self.piid
 
 
@@ -41,7 +41,7 @@ def _header(transaction_id: int, body: bytes) -> bytes:
         raise ValueError("Transaction ID must fit in one byte")
     total_length = len(body) + 4
     if total_length > 0xFF:
-        raise ValueError("MIoT property payload is too large")
+        raise ValueError("Miot property payload is too large")
     return bytes((total_length, MIOT_CHANNEL, transaction_id, 0)) + body
 
 
@@ -50,7 +50,7 @@ def _encode_value(value_type: ValueType, value: int) -> bytes:
 
 
 def build_set(transaction_id: int, prop: PropertySpec, value: int | bool) -> bytes:
-    """Build a request that writes one MIoT property."""
+    """Build a request that writes one Miot property."""
     if not prop.writable:
         raise ValueError(f"{prop.name} is not writable")
     normalized = prop.validate_value(value)
@@ -80,34 +80,34 @@ def _decode_value(value_type_raw: int, raw: bytes) -> tuple[ValueType, int | boo
     try:
         value_type = ValueType(value_type_raw)
     except ValueError as error:
-        raise ValueError(f"Unsupported MIoT value type: 0x{value_type_raw:02x}") from error
+        raise ValueError(f"Unsupported Miot value type: 0x{value_type_raw:02x}") from error
     if len(raw) != value_type.byte_width:
-        raise ValueError("MIoT value length does not match its type")
+        raise ValueError("Miot value length does not match its type")
     value = int.from_bytes(raw, "little", signed=value_type.signed)
     if value_type is ValueType.BOOL:
         if value not in (0, 1):
-            raise ValueError("MIoT boolean value must be zero or one")
+            raise ValueError("Miot boolean value must be zero or one")
         return value_type, bool(value)
     return value_type, value
 
 
 def _validate_payload(payload: bytes) -> Operation:
     if len(payload) < 6:
-        raise ValueError("MIoT property payload is too short")
+        raise ValueError("Miot property payload is too short")
     if payload[0] != len(payload):
-        raise ValueError("MIoT property payload length is inconsistent")
+        raise ValueError("Miot property payload length is inconsistent")
     if payload[1] != MIOT_CHANNEL or payload[3] != 0:
-        raise ValueError("MIoT property payload header is invalid")
+        raise ValueError("Miot property payload header is invalid")
     try:
         return Operation(payload[4])
     except ValueError as error:
-        raise ValueError(f"Unsupported MIoT operation: 0x{payload[4]:02x}") from error
+        raise ValueError(f"Unsupported Miot operation: 0x{payload[4]:02x}") from error
 
 
 def _parse_entry(payload: bytes, offset: int, snapshot: bool) -> tuple[PropertyValue, int]:
     metadata_size = 7 if snapshot else 5
     if offset + metadata_size > len(payload):
-        raise ValueError("MIoT property entry is truncated")
+        raise ValueError("Miot property entry is truncated")
     siid = payload[offset]
     piid = int.from_bytes(payload[offset + 1 : offset + 3], "little")
     length_offset = offset + 5 if snapshot else offset + 3
@@ -116,7 +116,7 @@ def _parse_entry(payload: bytes, offset: int, snapshot: bool) -> tuple[PropertyV
     value_offset = type_offset + 1
     end = value_offset + value_length
     if end > len(payload):
-        raise ValueError("MIoT property value is truncated")
+        raise ValueError("Miot property value is truncated")
     value_type, value = _decode_value(payload[type_offset], payload[value_offset:end])
     return PropertyValue(siid, piid, value_type, value), end
 
@@ -132,7 +132,7 @@ def parse_properties(payload: bytes) -> tuple[PropertyValue, ...]:
             value, offset = _parse_entry(payload, offset, snapshot=True)
             values.append(value)
         if offset != len(payload):
-            raise ValueError("MIoT snapshot contains trailing data")
+            raise ValueError("Miot snapshot contains trailing data")
         return tuple(values)
     if operation is Operation.NOTIFY:
         expected_count = payload[5]
@@ -142,6 +142,6 @@ def parse_properties(payload: bytes) -> tuple[PropertyValue, ...]:
             value, offset = _parse_entry(payload, offset, snapshot=False)
             values.append(value)
         if offset != len(payload):
-            raise ValueError("MIoT notification contains trailing data")
+            raise ValueError("Miot notification contains trailing data")
         return tuple(values)
-    raise ValueError(f"MIoT operation {operation.name} does not contain property values")
+    raise ValueError(f"Miot operation {operation.name} does not contain property values")

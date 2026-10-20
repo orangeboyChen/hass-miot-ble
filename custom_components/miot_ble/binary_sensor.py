@@ -1,4 +1,4 @@
-"""Binary sensor entities for Xiaomi MIoT BLE."""
+"""Binary sensor entities for Xiaomi Miot BLE."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ class MiotBleConnectionBinarySensor(CoordinatorEntity[MiotBleCoordinator], Binar
 
 
 class MiotBleBinarySensor(MiotBleEntity, BinarySensorEntity):
-    """Expose one MIoT property as a binary sensor."""
+    """Expose one Miot property as a binary sensor."""
 
     @property
     def is_on(self) -> bool | None:

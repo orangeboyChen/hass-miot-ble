@@ -1,4 +1,4 @@
-"""Tests for the Xiaomi MIoT BLE coordinator."""
+"""Tests for the Xiaomi Miot BLE coordinator."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch

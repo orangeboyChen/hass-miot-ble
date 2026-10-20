@@ -1,4 +1,4 @@
-"""Tests for the Xiaomi MIoT BLE config flow."""
+"""Tests for the Xiaomi Miot BLE config flow."""
 
 import base64
 from types import SimpleNamespace

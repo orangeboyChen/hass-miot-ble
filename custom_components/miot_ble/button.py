@@ -1,4 +1,4 @@
-"""Connection control buttons for Xiaomi MIoT BLE."""
+"""Connection control buttons for Xiaomi Miot BLE."""
 
 from __future__ import annotations
 

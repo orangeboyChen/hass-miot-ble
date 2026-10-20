@@ -1,4 +1,4 @@
-"""Select entities for Xiaomi MIoT BLE."""
+"""Select entities for Xiaomi Miot BLE."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ async def async_setup_entry(
 
 
 class MiotBleSelect(MiotBleEntity, SelectEntity):
-    """Select one value from a bounded MIoT integer range."""
+    """Select one value from a bounded Miot integer range."""
 
     def __init__(self, coordinator: MiotBleCoordinator, prop: PropertySpec) -> None:
         super().__init__(coordinator, prop)

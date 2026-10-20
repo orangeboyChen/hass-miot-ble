@@ -1,4 +1,4 @@
-"""Tests for dynamically generated MIoT BLE entities."""
+"""Tests for dynamically generated Miot BLE entities."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock

@@ -1,4 +1,4 @@
-"""Xiaomi Standard Auth and encrypted MIoT BLE session."""
+"""Xiaomi Standard Auth and encrypted Miot BLE session."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ AUTH_CHUNK_SIZE = 18
 
 
 class MiotBleError(Exception):
-    """Base error raised by the MIoT BLE protocol."""
+    """Base error raised by the Miot BLE protocol."""
 
 
 class AuthenticationError(MiotBleError):
@@ -101,7 +101,7 @@ class NotificationInbox:
 
 
 class MiotBleSession:
-    """Own an authenticated Xiaomi BLE connection and MIoT transaction state."""
+    """Own an authenticated Xiaomi BLE connection and Miot transaction state."""
 
     def __init__(
         self,
@@ -321,12 +321,12 @@ class MiotBleSession:
             encrypted = b"".join(chunks)
             await self._write(UUID_MIOT_NOTIFY, RECEIVE_OK)
         if len(encrypted) < 7:
-            raise MiotBleError("Encrypted MIoT response is truncated")
+            raise MiotBleError("Encrypted Miot response is truncated")
         counter = struct.unpack("<H", encrypted[:2])[0]
         return self._keys.decrypt_from_device(counter, encrypted[2:])
 
     async def open_property_session(self) -> None:
-        """Open the encrypted MIoT property channel."""
+        """Open the encrypted Miot property channel."""
         async with self._command_lock:
             payload = bytes((5, 0x20, self._next_transaction_id(), 0, Operation.OPEN))
             await self._send_request(payload)
@@ -357,7 +357,7 @@ class MiotBleSession:
                     values = parse_properties(response)
                 except ValueError as error:
                     _LOGGER.debug(
-                        "Ignoring MIoT payload while waiting for initial properties: %s (%s)",
+                        "Ignoring Miot payload while waiting for initial properties: %s (%s)",
                         response.hex(),
                         error,
                     )
@@ -486,7 +486,7 @@ class MiotBleSession:
                     changed_values = parse_properties(response)
                 except ValueError as error:
                     _LOGGER.debug(
-                        "Ignoring MIoT payload while waiting for %s confirmation: %s (%s)",
+                        "Ignoring Miot payload while waiting for %s confirmation: %s (%s)",
                         prop.name,
                         response.hex(),
                         error,

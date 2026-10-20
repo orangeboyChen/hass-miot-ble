@@ -1,4 +1,4 @@
-"""Constants for Xiaomi MIoT BLE."""
+"""Constants for Xiaomi Miot BLE."""
 
 DOMAIN = "miot_ble"
 

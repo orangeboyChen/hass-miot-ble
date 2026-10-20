@@ -1,4 +1,4 @@
-"""Sensor entities for Xiaomi MIoT BLE."""
+"""Sensor entities for Xiaomi Miot BLE."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up read-only MIoT sensor properties."""
+    """Set up read-only Miot sensor properties."""
     coordinator: MiotBleCoordinator = entry.runtime_data
     async_add_entities(
         MiotBleSensor(coordinator, prop)
@@ -28,7 +28,7 @@ async def async_setup_entry(
 
 
 class MiotBleSensor(MiotBleEntity, SensorEntity):
-    """Expose one MIoT property as a sensor."""
+    """Expose one Miot property as a sensor."""
 
     def __init__(self, coordinator: MiotBleCoordinator, prop: PropertySpec) -> None:
         super().__init__(coordinator, prop)

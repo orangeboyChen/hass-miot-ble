@@ -1,4 +1,4 @@
-"""Reusable Xiaomi MIoT BLE protocol primitives."""
+"""Reusable Xiaomi Miot BLE protocol primitives."""
 
 from .crypto import SessionKeys
 from .session import AuthenticationError, MiotBleError, MiotBleSession, ResponseTimeoutError

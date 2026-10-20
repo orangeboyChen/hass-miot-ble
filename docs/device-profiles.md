@@ -8,7 +8,7 @@ these details should be updated when a real device reveals a protocol change.
 
 - Model: `xiaomi.magic_touch.yb01`
 - MiBeacon product ID: `0x46C6` (`18118`)
-- MIoT type: `urn:miot-spec-v2:device:massager:0000A083:xiaomi-yb01:1`
+- Miot type: `urn:miot-spec-v2:device:massager:0000A083:xiaomi-yb01:1`
 - Plugin package: `1019936`
 - Captured plugin version: `1.0.93` (`1038189`)
 - Authentication type: Xiaomi Standard Auth (`authType=4`)
@@ -28,7 +28,7 @@ behavior. It treats power as an unsigned byte with `0` for off, `1` for on, and
 
 - Model: `xiaomi.magic_touch.yb11`
 - MiBeacon product ID: `0x8FD3` (`36819`)
-- MIoT type: `urn:miot-spec-v2:device:massager:0000A083:xiaomi-yb11:1`
+- Miot type: `urn:miot-spec-v2:device:massager:0000A083:xiaomi-yb11:1`
 - Plugin package: `1042019`
 - Captured plugin version: `1.1.16` (`1069485`)
 - Authentication type: Xiaomi Standard Auth (`authType=4`)
@@ -36,7 +36,7 @@ behavior. It treats power as an unsigned byte with `0` for off, `1` for on, and
 The captured plugin declares battery `3/1003` and massager properties under
 service `4`, ending at `4/15`. String properties, the firmware report code, and
 properties without a useful user-facing control are omitted. Battery `3/1003`
-proves that the MIoT BLE property identifier occupies two little-endian bytes;
+proves that the Miot BLE property identifier occupies two little-endian bytes;
 the profile codec supports the full `1..65535` PIID range. The plugin displays
 the raw battery value multiplied by five.
 

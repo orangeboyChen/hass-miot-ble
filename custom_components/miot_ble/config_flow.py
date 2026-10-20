@@ -1,4 +1,4 @@
-"""Config flow for Xiaomi MIoT BLE."""
+"""Config flow for Xiaomi Miot BLE."""
 
 from __future__ import annotations
 
@@ -126,7 +126,7 @@ async def async_fetch_cloud_token(client: XiaomiCloudClient, address: str) -> st
 
 
 class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Configure a Xiaomi MIoT BLE device."""
+    """Configure a Xiaomi Miot BLE device."""
 
     VERSION = 1
 

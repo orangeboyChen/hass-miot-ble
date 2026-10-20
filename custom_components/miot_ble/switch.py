@@ -1,4 +1,4 @@
-"""Switch entities for Xiaomi MIoT BLE."""
+"""Switch entities for Xiaomi Miot BLE."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ async def async_setup_entry(
 
 
 class MiotBleSwitch(MiotBleEntity, SwitchEntity):
-    """Control a binary MIoT property."""
+    """Control a binary Miot property."""
 
     @property
     def is_on(self) -> bool | None:
