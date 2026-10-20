@@ -1,143 +1,39 @@
+[简体中文](README_zh.md)
+
 # Xiaomi MIoT BLE for Home Assistant
 
-`hass-miot-ble` is an early-stage Home Assistant integration for local control
-of Xiaomi devices that expose MIoT properties over Bluetooth Low Energy.
+`hass-miot-ble` is a Home Assistant custom integration for controlling supported
+Xiaomi MIoT Bluetooth Low Energy devices locally.
 
-The project is designed around reusable protocol layers instead of embedding
-device-specific behavior in the Bluetooth transport:
+## Supported devices
 
-- Xiaomi Standard Auth session key derivation and AES-CCM helpers
-- MIoT property request and response codecs
-- Declarative device profiles
-- Home Assistant entities generated from profile capabilities
-
-The shared profile engine can generate binary sensors, numbers, sensors,
-selects, and switches. It supports Boolean values, signed and unsigned
-8/16/32/64-bit integers, bounded numeric ranges, and non-contiguous MIoT value
-lists. Adding a device that follows the same transport therefore only requires
-a tested declarative profile rather than another integration implementation.
-
-## Current status
-
-The protocol core, Xiaomi Standard Auth session, encrypted property transport,
-Home Assistant config flow, coordinator, and profile-driven entities are
-implemented with simulated GATT tests. The profiles have not yet been validated
-against physical devices, so this repository should still be treated as
-experimental.
-
-The currently supported devices are:
-
-| Model | MIoT specification | Status |
+| Device | Model | Available controls and states |
 | --- | --- | --- |
-| `muxnw.dryer.m73` | `urn:miot-spec-v2:device:clothes-dryer:0000A06D:muxnw-m73:1` | Software path implemented; hardware validation pending |
-| `xiaomi.magic_touch.yb01` | `urn:miot-spec-v2:device:massager:0000A083:xiaomi-yb01:1` | Plugin-derived profile implemented; hardware validation pending |
-| `xiaomi.magic_touch.yb11` | `urn:miot-spec-v2:device:massager:0000A083:xiaomi-yb11:1` | Plugin-derived profile implemented; hardware validation pending |
+| Muxiang M73 Shoe Dryer | `muxnw.dryer.m73` | Power, UV, timer, remaining time |
+| Xiaomi Smart Waist Massager YB01 | `xiaomi.magic_touch.yb01` | Power, mode, timer, heating, battery |
+| Xiaomi Smart Waist and Back Massager YB11 | `xiaomi.magic_touch.yb11` | Power, mode, timer, heating, regional massage, beep, battery |
 
-The M73 profile is based on the device's Mi Home plugin bundle:
-
-| Property | SIID/PIID | Wire type | Access |
-| --- | --- | --- | --- |
-| Power | `2/1` | `uint8` | Read, write, notify |
-| UV | `2/2` | `uint8` | Read, write, notify |
-| Timer | `2/3` | `uint8` | Read, write, notify |
-| Remaining time | `2/4` | `uint16` | Notify |
+Every supported device also provides its connection state and Connect and
+Disconnect buttons.
 
 ## Installation
 
-The integration is not yet included in the default HACS repository list.
+### HACS
 
-1. In HACS, open **Integrations**, choose the three-dot menu, and select
-   **Custom repositories**.
-2. Add `https://github.com/orangeboyChen/hass-miot-ble` with the category
-   **Integration**.
-3. Install **Xiaomi MIoT BLE** and restart Home Assistant.
+1. Open **HACS** > **Integrations**.
+2. Open the three-dot menu and select **Custom repositories**.
+3. Add `https://github.com/orangeboyChen/hass-miot-ble` as an **Integration**.
+4. Install **Xiaomi MIoT BLE** and restart Home Assistant.
 
-For a manual installation, copy `custom_components/miot_ble` into the
-`custom_components` directory under the Home Assistant configuration directory,
-then restart Home Assistant.
+### Manual installation
+
+Copy `custom_components/miot_ble` into the `custom_components` directory in your
+Home Assistant configuration directory, then restart Home Assistant.
 
 ## Adding a device
 
-Before starting, Home Assistant needs a local Bluetooth adapter or a supported
-Bluetooth proxy that can make active connections. Keep the device powered on,
-near a Bluetooth adapter or proxy, and advertising.
-
-1. In Home Assistant, open **Settings** > **Devices & services**.
-2. Select **Add integration** and search for **Xiaomi MIoT BLE**.
-3. Select a supported nearby device and optionally set a display name. Devices
-   without an implemented profile are not listed.
-4. If a saved Xiaomi account session exists, choose it or select **Add Xiaomi
-   account**. Otherwise, sign in with the Xiaomi account that owns the device.
-   Home Assistant reads the device's 12-byte Standard Auth token from Xiaomi
-   Cloud. This token is distinct from the MiBeacon broadcast bindkey used by the
-   official Xiaomi BLE integration.
-5. If Xiaomi requests an image captcha, enter the characters shown in Home
-   Assistant. If Xiaomi requests account verification, open the supplied Xiaomi
-   page and request a phone or email verification code. Do not submit the code
-   on the Xiaomi page; enter it in Home Assistant instead. Challenge data and
-   account credentials remain only in the active setup flow and are discarded
-   afterward.
-6. The integration connects to the device and authenticates before it saves the
-   config entry.
-
-The Xiaomi account password is used only for interactive sign-in and is never
-stored. The resulting `serviceToken`, `ssecurity`, Xiaomi user ID, and generated
-client device ID are saved in Home Assistant's local storage so the session can
-be reused when another supported device is added. If Xiaomi explicitly rejects
-a saved session, the integration removes it and asks for another saved account
-or a new sign-in. Transient network failures do not delete saved sessions.
-
-The YB01 and YB11 profiles expose their supported power, mode, time, heating,
-and battery properties. If setup reports that the device cannot be reached,
-check Bluetooth range and make sure Mi Home is not holding an active
-connection. If authentication fails, restart setup so Home Assistant can
-refresh the device's local access data.
-
-Home Assistant reads and subscribes to the current properties when the
-connection opens. One background receiver continuously consumes encrypted
-notifications, so both confirmed writes and unsolicited device changes are
-pushed to Home Assistant immediately. A lightweight 60-second coordinator
-refresh checks connection health and reconnects and resubscribes when needed.
-The device generally accepts only one active controller, so close Mi Home while
-Home Assistant owns the BLE connection.
-
-Each device also exposes a diagnostic connection binary sensor and Connect and
-Disconnect buttons. Disconnect pauses automatic reconnection until Connect is
-pressed. Property entities are unavailable whenever the authenticated property
-channel is disconnected.
-
-If a device later rejects its Standard Auth token, Home Assistant starts a
-Xiaomi account reauthentication flow and retrieves a replacement automatically
-without deleting the device or its entities.
-
-## Current limitations
-
-- Xiaomi may introduce account verification methods that are not yet supported;
-  image captcha and phone or email verification-code flows are implemented.
-- The supported profiles still need validation on physical hardware.
-- Supporting another MIoT BLE model requires a tested device profile and may
-  require a protocol quirk.
-
-Captured bundle versions, product IDs, property mappings, and firmware
-assumptions are documented in [Device profiles](docs/device-profiles.md).
-
-## Development
-
-```shell
-uv sync
-uv run pytest
-uv run ruff check .
-```
-
-The test suite enforces at least 90 percent branch coverage.
-
-## Design boundary
-
-"Generic" means the authentication, encrypted transport, MIoT codec, and Home
-Assistant entity machinery are shared. A device can still require a profile or
-a small protocol quirk handler when its firmware differs from the standard
-MIoT BLE behavior.
-
-## License
-
-MIT
+1. Make sure Home Assistant has access to a Bluetooth adapter or Bluetooth
+   proxy and the device is nearby.
+2. Open **Settings** > **Devices & services** > **Add integration**.
+3. Search for **Xiaomi MIoT BLE** and select a supported device.
+4. Sign in to the Xiaomi account that owns the device when prompted.
