@@ -56,17 +56,9 @@ def build_set(transaction_id: int, prop: PropertySpec, value: int | bool) -> byt
     normalized = prop.validate_value(value)
     encoded = _encode_value(prop.value_type, normalized)
     body = (
-        bytes(
-            (
-                Operation.SET,
-                1,
-                prop.siid,
-                prop.piid,
-                0,
-                len(encoded),
-                prop.value_type,
-            )
-        )
+        bytes((Operation.SET, 1, prop.siid))
+        + prop.piid.to_bytes(2, "little")
+        + bytes((len(encoded), prop.value_type))
         + encoded
     )
     return _header(transaction_id, body)
@@ -80,7 +72,7 @@ def build_subscribe(transaction_id: int, properties: tuple[PropertySpec, ...]) -
         raise ValueError("A subscription cannot contain more than 255 properties")
     if any(not (prop.readable or prop.notifiable) for prop in properties):
         raise ValueError("Subscription contains a property without read or notify access")
-    pairs = b"".join(bytes((prop.siid, prop.piid, 0)) for prop in properties)
+    pairs = b"".join(bytes((prop.siid,)) + prop.piid.to_bytes(2, "little") for prop in properties)
     return _header(transaction_id, bytes((Operation.SUBSCRIBE, len(properties))) + pairs)
 
 
@@ -116,7 +108,8 @@ def _parse_entry(payload: bytes, offset: int, snapshot: bool) -> tuple[PropertyV
     metadata_size = 7 if snapshot else 5
     if offset + metadata_size > len(payload):
         raise ValueError("MIoT property entry is truncated")
-    siid, piid = payload[offset], payload[offset + 1]
+    siid = payload[offset]
+    piid = int.from_bytes(payload[offset + 1 : offset + 3], "little")
     length_offset = offset + 5 if snapshot else offset + 3
     value_length = payload[length_offset]
     type_offset = length_offset + 1

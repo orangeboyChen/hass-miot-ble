@@ -29,7 +29,11 @@ from custom_components.miot_ble.config_flow import (
     normalize_token,
 )
 from custom_components.miot_ble.const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
-from custom_components.miot_ble.profiles import MUXNW_DRYER_M73
+from custom_components.miot_ble.profiles import (
+    MUXNW_DRYER_M73,
+    XIAOMI_MAGIC_TOUCH_YB01,
+    XIAOMI_MAGIC_TOUCH_YB11,
+)
 from custom_components.miot_ble.protocol import AuthenticationError
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
@@ -98,6 +102,17 @@ def test_discovery_uses_product_id_and_hides_unsupported_devices() -> None:
         return_value=[supported, unsupported, missing_data, malformed],
     ):
         assert _discovered_devices(MagicMock()) == {ADDRESS: ("Unexpected name", MUXNW_DRYER_M73)}
+
+
+@pytest.mark.parametrize(
+    ("product_id", "profile"),
+    [
+        (0x46C6, XIAOMI_MAGIC_TOUCH_YB01),
+        (0x8FD3, XIAOMI_MAGIC_TOUCH_YB11),
+    ],
+)
+def test_massager_discovery_uses_fe95_product_id(product_id: int, profile: object) -> None:
+    assert _profile_for_discovery(discovery_info(product_id=product_id, name=None)) is profile
 
 
 @pytest.mark.asyncio

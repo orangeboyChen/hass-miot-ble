@@ -72,19 +72,24 @@ class PropertySpec:
     step: int | None = None
     unit: str | None = None
     value_map: tuple[tuple[int, str], ...] = ()
+    value_multiplier: int = 1
 
     def __post_init__(self) -> None:
         """Validate profile metadata at import time."""
         if not self.name:
             raise ValueError("Property name must not be empty")
-        if not 1 <= self.siid <= 255 or not 1 <= self.piid <= 255:
-            raise ValueError("SIID and PIID must be between 1 and 255")
+        if not 1 <= self.siid <= 0xFF:
+            raise ValueError("SIID must be between 1 and 255")
+        if not 1 <= self.piid <= 0xFFFF:
+            raise ValueError("PIID must be between 1 and 65535")
         if not (self.readable or self.writable or self.notifiable):
             raise ValueError("Property must expose at least one access mode")
         if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
             raise ValueError("Property minimum must not exceed maximum")
         if self.step is not None and self.step <= 0:
             raise ValueError("Property step must be positive")
+        if self.value_multiplier <= 0:
+            raise ValueError("Property value multiplier must be positive")
         values = [value for value, _ in self.value_map]
         labels = [label for _, label in self.value_map]
         if len(values) != len(set(values)) or len(labels) != len(set(labels)):

@@ -43,6 +43,26 @@ def test_build_subscribe() -> None:
         build_subscribe(1, ())
 
 
+def test_extended_piid_encoding_and_decoding() -> None:
+    prop = PropertySpec(
+        "battery",
+        3,
+        1003,
+        ValueType.UINT8,
+        EntityKind.SENSOR,
+        writable=True,
+        notifiable=True,
+    )
+    assert build_set(1, prop, 7).hex() == "0c200100000103eb03011007"
+    assert build_subscribe(1, (prop,)).hex() == "09200100020103eb03"
+
+    notification = parse_properties(bytes.fromhex("0c200100040103eb03011004"))
+    assert [(value.key, value.value) for value in notification] == [((3, 1003), 4)]
+
+    snapshot = parse_properties(bytes.fromhex("0e200100030103eb030000011004"))
+    assert [(value.key, value.value) for value in snapshot] == [((3, 1003), 4)]
+
+
 def test_build_subscribe_rejects_write_only_property() -> None:
     prop = PropertySpec(
         "write_only",

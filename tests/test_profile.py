@@ -5,6 +5,8 @@ import pytest
 from custom_components.miot_ble.profile import DeviceProfile, EntityKind, PropertySpec, ValueType
 from custom_components.miot_ble.profiles import (
     MUXNW_DRYER_M73,
+    XIAOMI_MAGIC_TOUCH_YB01,
+    XIAOMI_MAGIC_TOUCH_YB11,
     get_profile,
     iter_profiles,
     profile_for_product_id,
@@ -18,7 +20,55 @@ def test_m73_profile_matches_plugin_bundle() -> None:
     assert [prop.key for prop in profile.properties] == [(2, 1), (2, 2), (2, 3), (2, 4)]
     assert profile.property(2, 3).maximum == 6
     assert profile.property(2, 4).value_type is ValueType.UINT16
-    assert list(iter_profiles()) == [profile]
+    assert list(iter_profiles()) == [
+        profile,
+        XIAOMI_MAGIC_TOUCH_YB01,
+        XIAOMI_MAGIC_TOUCH_YB11,
+    ]
+
+
+def test_yb01_profile_matches_plugin_bundle() -> None:
+    profile = get_profile("xiaomi.magic_touch.yb01")
+    assert profile is XIAOMI_MAGIC_TOUCH_YB01
+    assert profile.auth_type == 4
+    assert [prop.key for prop in profile.properties] == [
+        (3, 1),
+        (4, 1),
+        (4, 2),
+        (4, 3),
+        (4, 4),
+        (4, 5),
+        (4, 6),
+        (4, 7),
+        (4, 10),
+    ]
+    assert profile.property(3, 1).value_multiplier == 5
+    assert profile.property(4, 3).value_map == ()
+    assert profile.property(4, 3).minimum == 10
+    assert profile.property(4, 3).step == 5
+    assert profile.property(4, 10).maximum == 2
+
+
+def test_yb11_profile_matches_plugin_bundle() -> None:
+    profile = get_profile("xiaomi.magic_touch.yb11")
+    assert profile is XIAOMI_MAGIC_TOUCH_YB11
+    assert profile.auth_type == 4
+    assert [prop.key for prop in profile.properties] == [
+        (3, 1003),
+        (4, 1),
+        (4, 2),
+        (4, 3),
+        (4, 4),
+        (4, 5),
+        (4, 8),
+        (4, 11),
+        (4, 13),
+        (4, 14),
+        (4, 15),
+    ]
+    assert profile.property(3, 1003).value_multiplier == 5
+    assert profile.property(4, 3).entity_kind is EntityKind.NUMBER
+    assert profile.property(4, 8).maximum == 4
 
 
 def test_unknown_profile_and_property_are_rejected() -> None:
@@ -29,7 +79,9 @@ def test_unknown_profile_and_property_are_rejected() -> None:
 
 
 def test_product_id_matches_only_supported_profiles() -> None:
+    assert profile_for_product_id(0x46C6) is XIAOMI_MAGIC_TOUCH_YB01
     assert profile_for_product_id(0x5A5B) is MUXNW_DRYER_M73
+    assert profile_for_product_id(0x8FD3) is XIAOMI_MAGIC_TOUCH_YB11
     assert profile_for_product_id(0x0000) is None
 
 
@@ -57,6 +109,8 @@ def test_property_validates_values() -> None:
         ({"name": "x", "siid": 1, "piid": 1, "readable": False}, "access"),
         ({"name": "x", "siid": 1, "piid": 1, "minimum": 2, "maximum": 1}, "minimum"),
         ({"name": "x", "siid": 1, "piid": 1, "step": 0}, "step"),
+        ({"name": "x", "siid": 1, "piid": 65536}, "PIID"),
+        ({"name": "x", "siid": 1, "piid": 1, "value_multiplier": 0}, "multiplier"),
     ],
 )
 def test_property_rejects_invalid_metadata(kwargs: dict[str, object], message: str) -> None:

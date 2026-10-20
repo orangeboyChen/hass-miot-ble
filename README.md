@@ -21,17 +21,19 @@ a tested declarative profile rather than another integration implementation.
 
 The protocol core, Xiaomi Standard Auth session, encrypted property transport,
 Home Assistant config flow, coordinator, and profile-driven entities are
-implemented with simulated GATT tests. The protocol has not yet been validated
-against a physical M73, so this repository should still be treated as
+implemented with simulated GATT tests. The profiles have not yet been validated
+against physical devices, so this repository should still be treated as
 experimental.
 
-The first target is the Muxiang M73 shoe dryer:
+The currently supported devices are:
 
 | Model | MIoT specification | Status |
 | --- | --- | --- |
 | `muxnw.dryer.m73` | `urn:miot-spec-v2:device:clothes-dryer:0000A06D:muxnw-m73:1` | Software path implemented; hardware validation pending |
+| `xiaomi.magic_touch.yb01` | `urn:miot-spec-v2:device:massager:0000A083:xiaomi-yb01:1` | Plugin-derived profile implemented; hardware validation pending |
+| `xiaomi.magic_touch.yb11` | `urn:miot-spec-v2:device:massager:0000A083:xiaomi-yb11:1` | Plugin-derived profile implemented; hardware validation pending |
 
-The profile is based on the device's Mi Home plugin bundle:
+The M73 profile is based on the device's Mi Home plugin bundle:
 
 | Property | SIID/PIID | Wire type | Access |
 | --- | --- | --- | --- |
@@ -78,10 +80,10 @@ near a Bluetooth adapter or proxy, and advertising.
 6. The integration connects to the device and authenticates before it saves the
    config entry.
 
-For the initial M73 profile, a successful setup creates power and UV switches,
-a timer selector, and a remaining-time sensor. If setup reports that the device
-cannot be reached, check Bluetooth range and make sure Mi Home is not holding an
-active connection. If authentication fails, restart setup so Home Assistant can
+The YB01 and YB11 profiles expose their supported power, mode, time, heating,
+and battery properties. If setup reports that the device cannot be reached,
+check Bluetooth range and make sure Mi Home is not holding an active
+connection. If authentication fails, restart setup so Home Assistant can
 refresh the device's local access data.
 
 Home Assistant reads and subscribes to the current properties when the
@@ -103,13 +105,14 @@ without deleting the device or its entities.
 
 ## Current limitations
 
-- Only `muxnw.dryer.m73` has a device profile.
 - Xiaomi may introduce account verification methods that are not yet supported;
   image captcha and phone or email verification-code flows are implemented.
-- The M73 login and property operations still need validation on physical
-  hardware.
+- The supported profiles still need validation on physical hardware.
 - Supporting another MIoT BLE model requires a tested device profile and may
   require a protocol quirk.
+
+Captured bundle versions, product IDs, property mappings, and firmware
+assumptions are documented in [Device profiles](docs/device-profiles.md).
 
 ## Development
 

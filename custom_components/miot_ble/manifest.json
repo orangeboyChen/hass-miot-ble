@@ -4,7 +4,6 @@
   "bluetooth": [
     {
       "connectable": true,
-      "local_name": "M73*",
       "service_uuid": "0000fe95-0000-1000-8000-00805f9b34fb"
     }
   ],
@@ -20,5 +19,5 @@
     "cryptography>=43.0.0",
     "xiaomi-ble==1.16.1"
   ],
-  "version": "0.9.0"
+  "version": "0.10.0"
 }

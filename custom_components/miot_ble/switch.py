@@ -9,7 +9,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import MiotBleCoordinator
 from .entity import MiotBleEntity
-from .profile import EntityKind
+from .profile import EntityKind, ValueType
 
 
 async def async_setup_entry(
@@ -33,12 +33,14 @@ class MiotBleSwitch(MiotBleEntity, SwitchEntity):
     def is_on(self) -> bool | None:
         """Return whether the property is enabled."""
         value = self.property_value
-        return None if value is None else bool(value)
+        return None if value is None else value == 1
 
     async def async_turn_on(self, **kwargs: object) -> None:
         """Enable the property."""
-        await self.coordinator.async_set_property(self.property_spec, 1)
+        value = True if self.property_spec.value_type is ValueType.BOOL else 1
+        await self.coordinator.async_set_property(self.property_spec, value)
 
     async def async_turn_off(self, **kwargs: object) -> None:
         """Disable the property."""
-        await self.coordinator.async_set_property(self.property_spec, 0)
+        value = False if self.property_spec.value_type is ValueType.BOOL else 0
+        await self.coordinator.async_set_property(self.property_spec, value)

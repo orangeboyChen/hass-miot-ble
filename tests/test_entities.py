@@ -19,7 +19,7 @@ from custom_components.miot_ble.entity import MiotBleEntity
 from custom_components.miot_ble.number import MiotBleNumber
 from custom_components.miot_ble.number import async_setup_entry as setup_number
 from custom_components.miot_ble.profile import EntityKind, PropertySpec, ValueType
-from custom_components.miot_ble.profiles import MUXNW_DRYER_M73
+from custom_components.miot_ble.profiles import MUXNW_DRYER_M73, XIAOMI_MAGIC_TOUCH_YB11
 from custom_components.miot_ble.select import MiotBleSelect
 from custom_components.miot_ble.select import async_setup_entry as setup_select
 from custom_components.miot_ble.sensor import MiotBleSensor
@@ -67,6 +67,18 @@ async def test_switch_entity() -> None:
     coordinator.data = {}
     assert entity.is_on is None
 
+    coordinator.data = {(2, 1): 2}
+    assert entity.is_on is False
+
+    heating = XIAOMI_MAGIC_TOUCH_YB11.property(4, 5)
+    bool_coordinator = make_coordinator({heating.key: True}, profile=XIAOMI_MAGIC_TOUCH_YB11)
+    bool_entity = MiotBleSwitch(bool_coordinator, heating)
+    assert bool_entity.is_on is True
+    await bool_entity.async_turn_off()
+    await bool_entity.async_turn_on()
+    assert bool_coordinator.async_set_property.await_args_list[0].args[1] is False
+    assert bool_coordinator.async_set_property.await_args_list[1].args[1] is True
+
 
 @pytest.mark.asyncio
 async def test_select_entity() -> None:
@@ -106,6 +118,38 @@ def test_sensor_entity() -> None:
     assert entity.device_class is SensorDeviceClass.DURATION
     assert entity.native_unit_of_measurement is UnitOfTime.SECONDS
     assert entity.state_class is SensorStateClass.MEASUREMENT
+
+
+def test_massager_battery_and_countdown_sensors() -> None:
+    battery = XIAOMI_MAGIC_TOUCH_YB11.property(3, 1003)
+    countdown = XIAOMI_MAGIC_TOUCH_YB11.property(4, 4)
+    coordinator = make_coordinator(
+        {battery.key: 17, countdown.key: 12},
+        profile=XIAOMI_MAGIC_TOUCH_YB11,
+    )
+
+    battery_entity = MiotBleSensor(coordinator, battery)
+    assert battery_entity.native_value == 85
+    assert battery_entity.device_class is SensorDeviceClass.BATTERY
+    assert battery_entity.native_unit_of_measurement == "%"
+    assert battery_entity.state_class is SensorStateClass.MEASUREMENT
+
+    countdown_entity = MiotBleSensor(coordinator, countdown)
+    assert countdown_entity.native_value == 12
+    assert countdown_entity.device_class is SensorDeviceClass.DURATION
+    assert countdown_entity.native_unit_of_measurement is UnitOfTime.MINUTES
+
+
+def test_massager_charging_state_is_not_on() -> None:
+    power = XIAOMI_MAGIC_TOUCH_YB11.property(4, 8)
+    coordinator = make_coordinator({power.key: 2}, profile=XIAOMI_MAGIC_TOUCH_YB11)
+    entity = MiotBleSwitch(coordinator, power)
+    assert entity.is_on is False
+
+    coordinator.data = {power.key: 3}
+    assert entity.is_on is False
+    coordinator.data = {power.key: 4}
+    assert entity.is_on is False
 
 
 @pytest.mark.asyncio
