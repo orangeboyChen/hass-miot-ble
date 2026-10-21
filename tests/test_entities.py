@@ -19,10 +19,14 @@ from custom_components.miot_ble.entity import MiotBleEntity
 from custom_components.miot_ble.number import MiotBleNumber
 from custom_components.miot_ble.number import async_setup_entry as setup_number
 from custom_components.miot_ble.profile import EntityKind, PropertySpec, ValueType
-from custom_components.miot_ble.profiles import MUXNW_DRYER_M73, XIAOMI_MAGIC_TOUCH_YB11
+from custom_components.miot_ble.profiles import (
+    MUXNW_DRYER_M73,
+    XIAOMI_MAGIC_TOUCH_YB01,
+    XIAOMI_MAGIC_TOUCH_YB11,
+)
 from custom_components.miot_ble.select import MiotBleSelect
 from custom_components.miot_ble.select import async_setup_entry as setup_select
-from custom_components.miot_ble.sensor import MiotBleSensor
+from custom_components.miot_ble.sensor import MiotBleSensor, MiotBleStateSensor
 from custom_components.miot_ble.sensor import async_setup_entry as setup_sensor
 from custom_components.miot_ble.switch import MiotBleSwitch
 from custom_components.miot_ble.switch import async_setup_entry as setup_switch
@@ -145,11 +149,68 @@ def test_massager_charging_state_is_not_on() -> None:
     coordinator = make_coordinator({power.key: 2}, profile=XIAOMI_MAGIC_TOUCH_YB11)
     entity = MiotBleSwitch(coordinator, power)
     assert entity.is_on is False
-
     coordinator.data = {power.key: 3}
     assert entity.is_on is False
     coordinator.data = {power.key: 4}
     assert entity.is_on is False
+
+
+@pytest.mark.parametrize(
+    ("profile", "states"),
+    [
+        (
+            XIAOMI_MAGIC_TOUCH_YB01,
+            ((0, "Standby"), (1, "Massaging"), (2, "Charging")),
+        ),
+        (
+            XIAOMI_MAGIC_TOUCH_YB11,
+            (
+                (0, "Standby"),
+                (1, "Massaging"),
+                (2, "Charging"),
+                (3, "Fully charged"),
+                (4, "Resetting"),
+            ),
+        ),
+    ],
+)
+def test_massager_device_status_sensor(profile, states) -> None:
+    spec = profile.state_sensors[0]
+    coordinator = make_coordinator(profile=profile)
+    entity = MiotBleStateSensor(coordinator, spec)
+
+    assert entity.unique_id == "aabbccddeeff_device_status"
+    assert entity.name == "Device Status"
+    assert entity.device_class is SensorDeviceClass.ENUM
+    assert entity.options == [label for _, label in states]
+    assert entity.device_info["model"] == profile.name
+    assert entity.native_value is None
+
+    for raw_value, state in states:
+        coordinator.data = {spec.source: raw_value}
+        assert entity.native_value == state
+
+    coordinator.data = {spec.source: 255}
+    assert entity.native_value is None
+    coordinator.connected = False
+    assert not entity.available
+
+
+@pytest.mark.asyncio
+async def test_massager_sensor_setup_adds_device_status() -> None:
+    coordinator = make_coordinator(profile=XIAOMI_MAGIC_TOUCH_YB11)
+    entry = SimpleNamespace(runtime_data=coordinator)
+    entities: list[object] = []
+
+    await setup_sensor(None, entry, entities.extend)
+
+    assert [type(entity) for entity in entities] == [
+        MiotBleSensor,
+        MiotBleSensor,
+        MiotBleStateSensor,
+    ]
+    power_unique_id = MiotBleSwitch(coordinator, XIAOMI_MAGIC_TOUCH_YB11.property(4, 8)).unique_id
+    assert entities[-1].unique_id != power_unique_id
 
 
 @pytest.mark.asyncio

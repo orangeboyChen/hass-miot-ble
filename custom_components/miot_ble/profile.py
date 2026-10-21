@@ -134,6 +134,28 @@ class PropertySpec:
 
 
 @dataclass(frozen=True, slots=True)
+class StateSensorSpec:
+    """Describe a read-only sensor derived from a Miot property value."""
+
+    name: str
+    source: tuple[int, int]
+    value_map: tuple[tuple[int, str], ...]
+
+    def __post_init__(self) -> None:
+        """Validate derived sensor metadata at import time."""
+        if not self.name:
+            raise ValueError("State sensor name must not be empty")
+        values = [value for value, _ in self.value_map]
+        labels = [label for _, label in self.value_map]
+        if not self.value_map:
+            raise ValueError("State sensor value map must not be empty")
+        if len(values) != len(set(values)) or len(labels) != len(set(labels)):
+            raise ValueError("State sensor value map must contain unique values and labels")
+        if any(not label for label in labels):
+            raise ValueError("State sensor value map labels must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class DeviceProfile:
     """Describe a Xiaomi BLE model and its Miot properties."""
 
@@ -142,6 +164,7 @@ class DeviceProfile:
     spec_type: str
     auth_type: int
     properties: tuple[PropertySpec, ...]
+    state_sensors: tuple[StateSensorSpec, ...] = ()
 
     def __post_init__(self) -> None:
         """Reject incomplete or ambiguous profiles."""
@@ -152,6 +175,14 @@ class DeviceProfile:
         keys = [prop.key for prop in self.properties]
         if len(keys) != len(set(keys)):
             raise ValueError("Profile contains duplicate SIID/PIID pairs")
+        sensor_names = [sensor.name for sensor in self.state_sensors]
+        if len(sensor_names) != len(set(sensor_names)):
+            raise ValueError("Profile contains duplicate state sensor names")
+        missing_sources = [
+            sensor.source for sensor in self.state_sensors if sensor.source not in set(keys)
+        ]
+        if missing_sources:
+            raise ValueError("State sensor source must reference a profile property")
 
     def property(self, siid: int, piid: int) -> PropertySpec:
         """Return a property by its Miot identifier."""

@@ -22,7 +22,9 @@ The captured plugin writes target-time values `10`, `15`, `20`, `25`, and `30`
 directly, even though one public specification revision describes that property
 as an enumeration from `1` through `5`. The profile follows the captured wire
 behavior. It treats power as an unsigned byte with `0` for off, `1` for on, and
-`2` for charging. Older firmware lists may describe power as a Boolean.
+`2` for charging. A derived device-status sensor exposes all three states while
+the power switch reports on only for value `1`. Older firmware lists may
+describe power as a Boolean.
 
 ## Xiaomi Smart Waist and Back Massager YB11
 
@@ -43,4 +45,5 @@ the raw battery value multiplied by five.
 Power `4/8` is an unsigned byte: `0` means off, `1` means on, `2` means
 charging, `3` means fully charged, and `4` means restoring. The switch entity
 therefore reports on only for value `1`; charging and maintenance states do not
-appear as active massage sessions.
+appear as active massage sessions. A derived device-status sensor exposes all
+five values, using `Resetting` for the plugin's restoring state.

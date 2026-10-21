@@ -2,7 +2,13 @@
 
 import pytest
 
-from custom_components.miot_ble.profile import DeviceProfile, EntityKind, PropertySpec, ValueType
+from custom_components.miot_ble.profile import (
+    DeviceProfile,
+    EntityKind,
+    PropertySpec,
+    StateSensorSpec,
+    ValueType,
+)
 from custom_components.miot_ble.profiles import (
     MUXNW_DRYER_M73,
     XIAOMI_MAGIC_TOUCH_YB01,
@@ -47,6 +53,13 @@ def test_yb01_profile_matches_plugin_bundle() -> None:
     assert profile.property(4, 3).minimum == 10
     assert profile.property(4, 3).step == 5
     assert profile.property(4, 10).maximum == 2
+    assert profile.state_sensors == (
+        StateSensorSpec(
+            "device_status",
+            (4, 10),
+            ((0, "Standby"), (1, "Massaging"), (2, "Charging")),
+        ),
+    )
 
 
 def test_yb11_profile_matches_plugin_bundle() -> None:
@@ -69,6 +82,19 @@ def test_yb11_profile_matches_plugin_bundle() -> None:
     assert profile.property(3, 1003).value_multiplier == 5
     assert profile.property(4, 3).entity_kind is EntityKind.NUMBER
     assert profile.property(4, 8).maximum == 4
+    assert profile.state_sensors == (
+        StateSensorSpec(
+            "device_status",
+            (4, 8),
+            (
+                (0, "Standby"),
+                (1, "Massaging"),
+                (2, "Charging"),
+                (3, "Fully charged"),
+                (4, "Resetting"),
+            ),
+        ),
+    )
 
 
 def test_unknown_profile_and_property_are_rejected() -> None:
@@ -180,3 +206,37 @@ def test_device_profile_rejects_invalid_metadata() -> None:
         DeviceProfile("model", "Name", "type", -1, (prop,))
     with pytest.raises(ValueError, match="duplicate"):
         DeviceProfile("model", "Name", "type", 4, (prop, prop))
+
+
+@pytest.mark.parametrize(
+    "value_map",
+    [
+        (),
+        ((1, "One"), (1, "Two")),
+        ((1, "Same"), (2, "Same")),
+        ((1, ""),),
+    ],
+)
+def test_state_sensor_rejects_invalid_value_map(
+    value_map: tuple[tuple[int, str], ...],
+) -> None:
+    with pytest.raises(ValueError, match="value map"):
+        StateSensorSpec("status", (1, 1), value_map)
+
+
+def test_device_profile_rejects_invalid_state_sensors() -> None:
+    prop = PropertySpec("value", 1, 1, ValueType.UINT8, EntityKind.SENSOR)
+    sensor = StateSensorSpec("status", prop.key, ((0, "Off"), (1, "On")))
+    with pytest.raises(ValueError, match="duplicate state sensor"):
+        DeviceProfile("model", "Name", "type", 4, (prop,), (sensor, sensor))
+    with pytest.raises(ValueError, match="source"):
+        DeviceProfile(
+            "model",
+            "Name",
+            "type",
+            4,
+            (prop,),
+            (StateSensorSpec("status", (9, 9), ((0, "Off"),)),),
+        )
+    with pytest.raises(ValueError, match="name"):
+        StateSensorSpec("", prop.key, ((0, "Off"),))

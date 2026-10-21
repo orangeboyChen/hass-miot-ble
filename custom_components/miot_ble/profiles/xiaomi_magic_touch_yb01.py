@@ -1,6 +1,6 @@
 """Device profile for the Xiaomi Smart Waist Massager YB01."""
 
-from ..profile import DeviceProfile, EntityKind, PropertySpec, ValueType
+from ..profile import DeviceProfile, EntityKind, PropertySpec, StateSensorSpec, ValueType
 
 _MODES = (
     (1, "Relax"),
@@ -110,6 +110,13 @@ PROFILE = DeviceProfile(
             notifiable=True,
             minimum=0,
             maximum=2,
+        ),
+    ),
+    state_sensors=(
+        StateSensorSpec(
+            name="device_status",
+            source=(4, 10),
+            value_map=((0, "Standby"), (1, "Massaging"), (2, "Charging")),
         ),
     ),
 )
