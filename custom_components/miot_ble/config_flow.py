@@ -38,6 +38,7 @@ from .protocol import AuthenticationError, MiotBleSession
 
 _LOGGER = logging.getLogger(__name__)
 _TOKEN_PATTERN = re.compile(r"[0-9a-fA-F]{24}")
+_MAC_PATTERN = re.compile(r"^[0-9a-fA-F]{12}$")
 CONF_CLOUD_ACCOUNT = "cloud_account"
 CLOUD_ACCOUNT_ADD = "__add_account__"
 
@@ -78,6 +79,35 @@ def _profile_for_discovery(info: BluetoothServiceInfoBleak) -> DeviceProfile | N
     return profile_for_bluetooth_name(info.name)
 
 
+def _cloud_mac_for_discovery(info: BluetoothServiceInfoBleak) -> str | None:
+    """Extract the Xiaomi MAC embedded in an FE95 advertisement.
+
+    CoreBluetooth exposes a per-host UUID instead of the hardware address.
+    Xiaomi's BLE advertisements carry the hardware address in bytes 5..10,
+    least-significant byte first, which is also how the Xiaomi mobile plugin
+    resolves iOS discoveries.
+    """
+    service_data = info.service_data.get(UUID_MI_SERVICE)
+    if not service_data or len(service_data) < 11:
+        return None
+    embedded = bytes(service_data[5:11])[::-1].hex()
+    if not _MAC_PATTERN.fullmatch(embedded):
+        return None
+    return ":".join(embedded[index : index + 2] for index in range(0, 12, 2)).upper()
+
+
+def _cloud_address_for_address(hass: Any, address: str) -> str | None:
+    """Return the cloud-visible address for a discovered local address."""
+    try:
+        discovered = async_discovered_service_info(hass)
+    except ImportError:
+        return None
+    for info in discovered:
+        if info.address == address:
+            return _cloud_mac_for_discovery(info)
+    return None
+
+
 def _discovered_devices(hass: Any) -> dict[str, tuple[str, DeviceProfile]]:
     """Return only nearby devices with an implemented profile."""
     devices: dict[str, tuple[str, DeviceProfile]] = {}
@@ -109,7 +139,10 @@ async def async_validate_connection(
 
 
 async def async_fetch_cloud_token(
-    client: XiaomiCloudClient, address: str, model: str | None = None
+    client: XiaomiCloudClient,
+    address: str,
+    model: str | None = None,
+    cloud_address: str | None = None,
 ) -> str:
     """Fetch and validate a BLE key using an authenticated cloud client."""
     from xiaomi_ble import (
@@ -118,10 +151,11 @@ async def async_fetch_cloud_token(
     )
 
     try:
+        lookup_address = cloud_address or address
         if model is None:
-            token = await client.async_get_device_token(address)
+            token = await client.async_get_device_token(lookup_address)
         else:
-            token = await client.async_get_device_token(address, model=model)
+            token = await client.async_get_device_token(lookup_address, model=model)
     except XiaomiCloudInvalidAuthenticationException as error:
         raise XiaomiCloudSessionError("Xiaomi Cloud API rejected the session") from error
     except XiaomiCloudException as error:
@@ -138,6 +172,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._discovered_address: str | None = None
+        self._discovered_cloud_address: str | None = None
         self._discovered_name: str | None = None
         self._discovered_profile: DeviceProfile | None = None
         self._pending_setup: dict[str, str] | None = None
@@ -154,6 +189,9 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
         self._discovered_address = discovery_info.address
+        self._discovered_cloud_address = (
+            _cloud_mac_for_discovery(discovery_info) or discovery_info.address
+        )
         self._discovered_name = profile.model
         self._discovered_profile = profile
         self.context["title_placeholders"] = {"name": self._discovered_name}
@@ -177,6 +215,8 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             address = str(user_input[CONF_ADDRESS]).strip()
             _, profile = devices[address]
+            if self._discovered_cloud_address is None:
+                self._discovered_cloud_address = _cloud_address_for_address(self.hass, address)
             name = str(user_input.get(CONF_NAME) or self._discovered_name or profile.name)
             self._pending_setup = {
                 CONF_ADDRESS: address,
@@ -233,6 +273,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                         self._cloud_client,
                         self._pending_setup[CONF_ADDRESS],
                         self._pending_setup[CONF_MODEL],
+                        self._discovered_cloud_address,
                     )
                 except XiaomiCloudAuthenticationError, XiaomiCloudSessionError:
                     await get_cloud_account_store(self.hass).async_remove(account_id)
@@ -400,6 +441,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._cloud_client,
                 self._pending_setup[CONF_ADDRESS],
                 self._pending_setup[CONF_MODEL],
+                self._discovered_cloud_address,
             )
         except XiaomiCloudAuthenticationError as auth_error:
             await get_cloud_account_store(self.hass).async_remove(cloud_session.account_id)
@@ -530,4 +572,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_MODEL: str(entry.data[CONF_MODEL]),
             CONF_NAME: str(entry.data.get(CONF_NAME) or entry.title),
         }
+        self._discovered_cloud_address = _cloud_address_for_address(
+            self.hass, self._pending_setup[CONF_ADDRESS]
+        )
         return await self.async_step_cloud_account()

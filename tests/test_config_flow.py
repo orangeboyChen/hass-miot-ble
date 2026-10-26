@@ -27,6 +27,7 @@ from custom_components.miot_ble.config_flow import (
     CONF_CLOUD_ACCOUNT,
     CloudDeviceNotFoundError,
     MiotBleConfigFlow,
+    _cloud_mac_for_discovery,
     _discovered_devices,
     _profile_for_discovery,
     async_fetch_cloud_token,
@@ -91,6 +92,17 @@ def test_normalize_token() -> None:
     for invalid in ("", "0011", "g" * 24, "0" * 32):
         with pytest.raises(ValueError, match="24 hexadecimal"):
             normalize_token(invalid)
+
+
+def test_cloud_mac_for_discovery_uses_fe95_embedded_mac() -> None:
+    info = discovery_info()
+    info.service_data = {UUID_MI_SERVICE: bytes.fromhex("b0545b5a0031508aeaf0d4080e00")}
+    assert _cloud_mac_for_discovery(info) == "D4:F0:EA:8A:50:31"
+
+
+def test_cloud_mac_for_discovery_returns_none_without_embedded_mac() -> None:
+    info = discovery_info()
+    assert _cloud_mac_for_discovery(info) is None
 
 
 def test_discovery_uses_product_id_and_hides_unsupported_devices() -> None:
