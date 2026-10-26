@@ -36,6 +36,7 @@ from custom_components.miot_ble.config_flow import (
 from custom_components.miot_ble.const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
 from custom_components.miot_ble.profiles import (
     MUXNW_DRYER_M73,
+    SOOCARE_MAGIC_TOUCH_M14,
     XIAOMI_MAGIC_TOUCH_YB01,
     XIAOMI_MAGIC_TOUCH_YB11,
 )
@@ -125,6 +126,13 @@ def test_discovery_uses_product_id_and_hides_unsupported_devices() -> None:
 )
 def test_massager_discovery_uses_fe95_product_id(product_id: int, profile: object) -> None:
     assert _profile_for_discovery(discovery_info(product_id=product_id, name=None)) is profile
+
+
+def test_m14_discovery_uses_plugin_bluetooth_name() -> None:
+    info = discovery_info(product_id=None, name="SMI-M14")
+    assert _profile_for_discovery(info) is SOOCARE_MAGIC_TOUCH_M14
+    info.name = "smi-m14"
+    assert _profile_for_discovery(info) is SOOCARE_MAGIC_TOUCH_M14
 
 
 @pytest.mark.asyncio

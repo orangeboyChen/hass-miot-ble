@@ -4,6 +4,25 @@ This document records the captured Mi Home plugin evidence and assumptions used
 by each profile. Hardware behavior can differ across firmware revisions, so
 these details should be updated when a real device reveals a protocol change.
 
+## Xiaomi Smart Neck Massager M14
+
+- Model: `soocare.magic_touch.m14`
+- Bluetooth local name: `SMI-M14`
+- Miot type: `urn:miot-spec-v2:device:massager:0000A083:soocare-m14:1:0000C81F`
+- Plugin package: `com.xiaomi.m13`
+- Captured plugin version: `1.0.81` (`1420224`)
+- Authentication type: Xiaomi BLE plugin `authType=5`
+
+The captured bundle reads battery `3/1` and device state `4/1`, writes power
+`2/1`, mode `2/2`, and heating `2/3`, and subscribes to `prop.2.3`,
+`prop.4.1`, and `prop.3.1`. The device is discovered by its exact `SMI-M14`
+Bluetooth local name because this plugin uses a BLE Mesh product identifier
+instead of the FE95 MiBeacon product IDs used by the other profiles.
+
+The mode select covers the three standard modes. The bundle's custom scene
+actions require a separate Miot action transport and are not exposed by the
+current declarative property profile.
+
 ## Xiaomi Smart Waist Massager YB01
 
 - Model: `xiaomi.magic_touch.yb01`

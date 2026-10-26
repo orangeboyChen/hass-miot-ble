@@ -11,6 +11,7 @@ from custom_components.miot_ble.profile import (
 )
 from custom_components.miot_ble.profiles import (
     MUXNW_DRYER_M73,
+    SOOCARE_MAGIC_TOUCH_M14,
     XIAOMI_MAGIC_TOUCH_YB01,
     XIAOMI_MAGIC_TOUCH_YB11,
     get_profile,
@@ -28,9 +29,44 @@ def test_m73_profile_matches_plugin_bundle() -> None:
     assert profile.property(2, 4).value_type is ValueType.UINT16
     assert list(iter_profiles()) == [
         profile,
+        SOOCARE_MAGIC_TOUCH_M14,
         XIAOMI_MAGIC_TOUCH_YB01,
         XIAOMI_MAGIC_TOUCH_YB11,
     ]
+
+
+def test_m14_profile_matches_plugin_bundle() -> None:
+    profile = get_profile("soocare.magic_touch.m14")
+    assert profile is SOOCARE_MAGIC_TOUCH_M14
+    assert profile.auth_type == 5
+    assert [prop.key for prop in profile.properties] == [
+        (3, 1),
+        (2, 2),
+        (2, 3),
+        (2, 1),
+        (4, 1),
+    ]
+    assert profile.property(3, 1).maximum == 100
+    assert profile.property(2, 2).value_map == (
+        (0, "Vitality"),
+        (1, "Knead"),
+        (2, "Unpack"),
+    )
+    assert profile.state_sensors == (
+        StateSensorSpec(
+            "device_status",
+            (4, 1),
+            (
+                (0, "Vitality"),
+                (1, "Knead"),
+                (2, "Unpack"),
+                (3, "Scene"),
+                (4, "Standby"),
+                (5, "Charging"),
+                (6, "Shutdown"),
+            ),
+        ),
+    )
 
 
 def test_yb01_profile_matches_plugin_bundle() -> None:

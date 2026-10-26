@@ -12,6 +12,7 @@ Xiaomi Miot Bluetooth Low Energy devices locally.
 | Muxiang M73 Shoe Dryer | `muxnw.dryer.m73` | Power, UV, timer, remaining time |
 | Xiaomi Smart Waist Massager YB01 | `xiaomi.magic_touch.yb01` | Power, device status, mode, timer, heating, battery |
 | Xiaomi Smart Waist and Back Massager YB11 | `xiaomi.magic_touch.yb11` | Power, device status, mode, timer, heating, regional massage, beep, battery |
+| Xiaomi Smart Neck Massager M14 | `soocare.magic_touch.m14` | Power, device status, mode, heating, battery |
 
 Every supported device also provides its connection state and Connect and
 Disconnect buttons.

@@ -33,7 +33,7 @@ from .cloud import (
 from .cloud_store import get_cloud_account_store
 from .const import CONF_TOKEN, DOMAIN, UUID_MI_SERVICE
 from .profile import DeviceProfile
-from .profiles import get_profile, profile_for_product_id
+from .profiles import get_profile, profile_for_bluetooth_name, profile_for_product_id
 from .protocol import AuthenticationError, MiotBleSession
 
 _LOGGER = logging.getLogger(__name__)
@@ -71,10 +71,11 @@ def normalize_token(value: str) -> str:
 def _profile_for_discovery(info: BluetoothServiceInfoBleak) -> DeviceProfile | None:
     """Return a profile only for a supported Xiaomi Bluetooth advertisement."""
     service_data = info.service_data.get(UUID_MI_SERVICE)
-    if service_data is None or len(service_data) < 4:
-        return None
-    product_id = int.from_bytes(service_data[2:4], byteorder="little")
-    return profile_for_product_id(product_id)
+    if service_data is not None and len(service_data) >= 4:
+        product_id = int.from_bytes(service_data[2:4], byteorder="little")
+        if profile := profile_for_product_id(product_id):
+            return profile
+    return profile_for_bluetooth_name(info.name)
 
 
 def _discovered_devices(hass: Any) -> dict[str, tuple[str, DeviceProfile]]:
