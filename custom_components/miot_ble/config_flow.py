@@ -83,7 +83,7 @@ def _discovered_devices(hass: Any) -> dict[str, tuple[str, DeviceProfile]]:
     devices: dict[str, tuple[str, DeviceProfile]] = {}
     for info in async_discovered_service_info(hass):
         if profile := _profile_for_discovery(info):
-            devices[info.address] = (info.name or profile.name, profile)
+            devices[info.address] = (profile.model, profile)
     return devices
 
 
@@ -108,7 +108,9 @@ async def async_validate_connection(
             await client.disconnect()
 
 
-async def async_fetch_cloud_token(client: XiaomiCloudClient, address: str) -> str:
+async def async_fetch_cloud_token(
+    client: XiaomiCloudClient, address: str, model: str | None = None
+) -> str:
     """Fetch and validate a BLE key using an authenticated cloud client."""
     from xiaomi_ble import (
         XiaomiCloudException,
@@ -116,7 +118,10 @@ async def async_fetch_cloud_token(client: XiaomiCloudClient, address: str) -> st
     )
 
     try:
-        token = await client.async_get_device_token(address)
+        if model is None:
+            token = await client.async_get_device_token(address)
+        else:
+            token = await client.async_get_device_token(address, model=model)
     except XiaomiCloudInvalidAuthenticationException as error:
         raise XiaomiCloudSessionError("Xiaomi Cloud API rejected the session") from error
     except XiaomiCloudException as error:
@@ -149,7 +154,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
         self._discovered_address = discovery_info.address
-        self._discovered_name = discovery_info.name or discovery_info.address
+        self._discovered_name = profile.model
         self._discovered_profile = profile
         self.context["title_placeholders"] = {"name": self._discovered_name}
         return await self.async_step_user()
@@ -227,6 +232,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
                     token = await async_fetch_cloud_token(
                         self._cloud_client,
                         self._pending_setup[CONF_ADDRESS],
+                        self._pending_setup[CONF_MODEL],
                     )
                 except XiaomiCloudAuthenticationError, XiaomiCloudSessionError:
                     await get_cloud_account_store(self.hass).async_remove(account_id)
@@ -393,6 +399,7 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
             token = await async_fetch_cloud_token(
                 self._cloud_client,
                 self._pending_setup[CONF_ADDRESS],
+                self._pending_setup[CONF_MODEL],
             )
         except XiaomiCloudAuthenticationError as auth_error:
             await get_cloud_account_store(self.hass).async_remove(cloud_session.account_id)

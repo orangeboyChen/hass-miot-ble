@@ -54,9 +54,9 @@
       "cloud_invalid_captcha": "小米云拒绝了验证码，请根据刷新后的图片重试",
       "cloud_invalid_verification": "小米云拒绝了验证码",
       "cloud_device_not_found": "该小米账号中没有找到此蓝牙设备",
-      "cloud_token_unavailable": "小米云没有返回本地控制所需的 12 字节 Standard Auth token",
+      "cloud_token_unavailable": "小米云没有返回本地控制所需的 BLE 密钥",
       "cloud_error": "无法查询小米云",
-      "cloud_key_unsupported": "小米云返回了无效的 Standard Auth token"
+      "cloud_key_unsupported": "小米云返回了无效的 BLE 密钥"
     },
     "abort": {
       "already_configured": "该设备已经配置",

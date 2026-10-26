@@ -114,7 +114,9 @@ def test_discovery_uses_product_id_and_hides_unsupported_devices() -> None:
         "custom_components.miot_ble.config_flow.async_discovered_service_info",
         return_value=[supported, unsupported, missing_data, malformed],
     ):
-        assert _discovered_devices(MagicMock()) == {ADDRESS: ("Unexpected name", MUXNW_DRYER_M73)}
+        assert _discovered_devices(MagicMock()) == {
+            ADDRESS: (MUXNW_DRYER_M73.model, MUXNW_DRYER_M73)
+        }
 
 
 @pytest.mark.parametrize(
@@ -215,7 +217,7 @@ async def test_saved_account_fetches_device_token_without_password(hass) -> None
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_TOKEN] == TOKEN
     from_session.assert_called_once()
-    client.async_get_device_token.assert_awaited_once_with(ADDRESS)
+    client.async_get_device_token.assert_awaited_once_with(ADDRESS, model=MODEL)
     client.clear_sensitive_data.assert_called_once_with()
 
 
@@ -312,7 +314,7 @@ async def test_cloud_flow_fetches_token_and_stores_session_without_password(hass
     assert saved == CLOUD_SESSION
     assert "password" not in saved.as_dict()
     client.async_login.assert_awaited_once_with()
-    client.async_get_device_token.assert_awaited_once_with(ADDRESS)
+    client.async_get_device_token.assert_awaited_once_with(ADDRESS, model=MODEL)
     client.clear_sensitive_data.assert_called_once_with()
     validate.assert_awaited_once()
 

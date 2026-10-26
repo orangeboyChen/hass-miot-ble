@@ -325,6 +325,7 @@ async def test_device_token_lookup_checks_owned_and_shared_homes() -> None:
             },
         ]
     )
+    client.get_beaconkey = AsyncMock()
 
     assert await client.async_get_device_token(ADDRESS) == TOKEN
     client.get_devices.assert_any_await("cn", "2", "456")
@@ -344,9 +345,94 @@ async def test_device_token_lookup_rejects_beaconkey_substitution() -> None:
         ]
         + [{"result": {"device_info": []}}] * 7
     )
+    client.get_beaconkey = AsyncMock(return_value=None)
 
-    with pytest.raises(XiaomiCloudDeviceTokenUnavailableError, match="Standard Auth"):
+    with pytest.raises(XiaomiCloudDeviceTokenUnavailableError, match="BLE key"):
         await client.async_get_device_token(ADDRESS)
+    client.get_beaconkey.assert_awaited_once_with("cn", "blt.123")
+
+
+@pytest.mark.asyncio
+async def test_device_token_lookup_uses_beaconkey_for_mesh_device() -> None:
+    client, _ = client_with_session()
+    client._serviceToken = "TOKEN"
+    client._ssecurity = base64.b64encode(b"security").decode()
+    client.userId = "123"
+    client.get_homes = AsyncMock(side_effect=[{"result": {"homelist": [{"id": 1}]}}] + [None] * 7)
+    client.get_dev_cnt = AsyncMock(return_value=None)
+    client.get_devices = AsyncMock(
+        side_effect=[
+            {
+                "result": {
+                    "device_info": [
+                        {
+                            "mac": "aabbccddeeff",
+                            "did": "blt.mesh-123",
+                            "model": "soocare.magic_touch.m14",
+                        }
+                    ]
+                }
+            }
+        ]
+        + [{"result": {"device_info": []}}] * 7
+    )
+    client.get_beaconkey = AsyncMock(return_value={"result": {"beaconkey": TOKEN.upper()}})
+
+    assert await client.async_get_device_token(ADDRESS) == TOKEN.upper()
+    client.get_beaconkey.assert_awaited_once_with("cn", "blt.mesh-123")
+
+
+@pytest.mark.asyncio
+async def test_device_token_lookup_uses_unique_model_when_mac_is_not_returned() -> None:
+    client, _ = client_with_session()
+    client._serviceToken = "TOKEN"
+    client._ssecurity = base64.b64encode(b"security").decode()
+    client.userId = "123"
+    client.get_homes = AsyncMock(side_effect=[{"result": {"homelist": [{"id": 1}]}}] + [None] * 7)
+    client.get_dev_cnt = AsyncMock(return_value=None)
+    client.get_devices = AsyncMock(
+        side_effect=[
+            {
+                "result": {
+                    "device_info": [
+                        {
+                            "did": "blt.unique-123",
+                            "model": "soocare.magic_touch.m14",
+                            "token": TOKEN,
+                        }
+                    ]
+                }
+            }
+        ]
+        + [{"result": {"device_info": []}}] * 7
+    )
+
+    assert await client.async_get_device_token(ADDRESS, model="soocare.magic_touch.m14") == TOKEN
+
+
+@pytest.mark.asyncio
+async def test_device_token_lookup_does_not_guess_between_same_models() -> None:
+    client, _ = client_with_session()
+    client._serviceToken = "TOKEN"
+    client._ssecurity = base64.b64encode(b"security").decode()
+    client.userId = "123"
+    client.get_homes = AsyncMock(side_effect=[{"result": {"homelist": [{"id": 1}]}}] + [None] * 7)
+    client.get_dev_cnt = AsyncMock(return_value=None)
+    client.get_devices = AsyncMock(
+        side_effect=[
+            {
+                "result": {
+                    "device_info": [
+                        {"did": "blt.one", "model": "soocare.magic_touch.m14"},
+                        {"did": "blt.two", "model": "soocare.magic_touch.m14"},
+                    ]
+                }
+            }
+        ]
+        + [{"result": {"device_info": []}}] * 7
+    )
+
+    assert await client.async_get_device_token(ADDRESS, model="soocare.magic_touch.m14") is None
 
 
 @pytest.mark.asyncio

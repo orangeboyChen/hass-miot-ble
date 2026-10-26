@@ -54,9 +54,9 @@
       "cloud_invalid_captcha": "Xiaomi Cloud rejected the captcha; try the refreshed image",
       "cloud_invalid_verification": "Xiaomi Cloud rejected the verification code",
       "cloud_device_not_found": "The Bluetooth device was not found in this Xiaomi account",
-      "cloud_token_unavailable": "Xiaomi Cloud did not return the 12-byte Standard Auth token required for local control",
+      "cloud_token_unavailable": "Xiaomi Cloud did not return the BLE key required for local control",
       "cloud_error": "Unable to query Xiaomi Cloud",
-      "cloud_key_unsupported": "Xiaomi Cloud returned an invalid Standard Auth token"
+      "cloud_key_unsupported": "Xiaomi Cloud returned an invalid BLE key"
     },
     "abort": {
       "already_configured": "This device is already configured",
