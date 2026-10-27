@@ -1,5 +1,6 @@
 """Tests for the Xiaomi Miot BLE coordinator."""
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -64,17 +65,21 @@ def test_connected_requires_authenticated_receiver(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_failure_drops_connection(hass) -> None:
+async def test_update_failure_drops_connection(hass, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="custom_components.miot_ble.coordinator")
     coordinator = make_coordinator(hass)
     coordinator._ensure_session = AsyncMock(side_effect=ConnectionError("offline"))
     coordinator._drop_connection = AsyncMock()
     with pytest.raises(UpdateFailed, match="offline"):
         await coordinator._async_update_data()
     coordinator._drop_connection.assert_awaited_once()
+    assert "Xiaomi BLE update failed" in caplog.text
+    assert "offline" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_set_failure_drops_connection(hass) -> None:
+async def test_set_failure_drops_connection(hass, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="custom_components.miot_ble.coordinator")
     coordinator = make_coordinator(hass)
     power = MUXNW_DRYER_M73.property(2, 1)
     coordinator._ensure_session = AsyncMock(side_effect=ConnectionError("offline"))
@@ -85,6 +90,8 @@ async def test_set_failure_drops_connection(hass) -> None:
 
     assert coordinator._ensure_session.await_count == 2
     assert coordinator._drop_connection.await_count == 2
+    assert "Xiaomi BLE write failed" in caplog.text
+    assert "offline" in caplog.text
 
 
 @pytest.mark.asyncio

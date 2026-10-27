@@ -55,6 +55,7 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
 
     def _disconnected(self, client: BleakClient) -> None:
         if client is self._client:
+            _LOGGER.warning("Xiaomi BLE device %s disconnected unexpectedly", self.address)
             session = self._session
             self._client = None
             self._session = None
@@ -118,27 +119,51 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
                 await self._drop_connection()
             ble_device = async_ble_device_from_address(self.hass, self.address)
             if ble_device is None:
+                _LOGGER.warning(
+                    "Xiaomi BLE device %s is not available to a Home Assistant "
+                    "Bluetooth adapter or proxy",
+                    self.address,
+                )
                 raise ConnectionError(
                     f"{self.address} is not in range of a Home Assistant Bluetooth adapter or proxy"
                 )
-            client = await establish_connection(
-                BleakClient,
-                ble_device,
-                self.address,
-                disconnected_callback=self._disconnected,
-            )
+            try:
+                client = await establish_connection(
+                    BleakClient,
+                    ble_device,
+                    self.address,
+                    disconnected_callback=self._disconnected,
+                )
+            except Exception as error:
+                _LOGGER.warning(
+                    "Failed to establish a GATT connection to Xiaomi BLE device %s: %s",
+                    self.address,
+                    error,
+                    exc_info=True,
+                )
+                raise
             session = MiotBleSession(client, self._token, self.profile)
             self._client = client
             self._session = session
+            stage = "starting the Miot protocol session"
             try:
                 await session.start()
+                stage = "authenticating with the device"
                 await session.login()
+                stage = "subscribing to property notifications"
                 await session.subscribe_properties(
                     self._properties,
                     lambda values: self._handle_property_values(session, values),
                 )
                 self.async_update_listeners()
-            except Exception:
+            except Exception as error:
+                _LOGGER.warning(
+                    "Xiaomi BLE device %s failed while %s: %s",
+                    self.address,
+                    stage,
+                    error,
+                    exc_info=True,
+                )
                 if session is self._session:
                     self._session = None
                     self._client = None
@@ -154,9 +179,21 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
             session = await self._ensure_session()
             return {key: result.value for key, result in session.property_values.items()}
         except AuthenticationError as error:
+            _LOGGER.warning(
+                "Xiaomi BLE device %s rejected authentication: %s",
+                self.address,
+                error,
+                exc_info=True,
+            )
             await self._drop_connection()
             raise ConfigEntryAuthFailed("The device rejected its BLE token") from error
         except Exception as error:
+            _LOGGER.warning(
+                "Xiaomi BLE update failed for %s: %s",
+                self.address,
+                error,
+                exc_info=True,
+            )
             await self._drop_connection()
             raise UpdateFailed(str(error)) from error
 
@@ -171,7 +208,14 @@ class MiotBleCoordinator(DataUpdateCoordinator[PropertyData]):
                     data[changed.key] = changed.value
                     self.async_set_updated_data(data)
                     return
-                except Exception:
+                except Exception as error:
+                    _LOGGER.warning(
+                        "Xiaomi BLE write failed for %s (attempt %d/2): %s",
+                        self.address,
+                        attempt + 1,
+                        error,
+                        exc_info=True,
+                    )
                     await self._drop_connection()
                     if attempt:
                         raise

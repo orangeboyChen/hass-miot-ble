@@ -1,6 +1,7 @@
 """Tests for the Xiaomi Miot BLE config flow."""
 
 import base64
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -371,9 +372,11 @@ async def test_cloud_flow_reports_local_session_storage_failure(hass) -> None:
 )
 async def test_cloud_flow_reports_device_connection_failure(
     hass,
+    caplog,
     validation_error: Exception,
     expected_error: str,
 ) -> None:
+    caplog.set_level(logging.WARNING, logger="custom_components.miot_ble.config_flow")
     flow = config_flow(hass, SOURCE_USER)
     flow._pending_setup = {
         CONF_ADDRESS: ADDRESS,
@@ -401,6 +404,9 @@ async def test_cloud_flow_reports_device_connection_failure(
         )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"]["base"] == expected_error
+    if expected_error == "cannot_connect":
+        assert "Unable to connect to Xiaomi BLE device" in caplog.text
+        assert "offline" in caplog.text
     client.clear_sensitive_data.assert_called_once_with()
 
 

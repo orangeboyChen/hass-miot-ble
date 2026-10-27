@@ -560,7 +560,12 @@ class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
         except AuthenticationError:
             return None, "invalid_auth"
         except Exception as error:
-            _LOGGER.debug("Unable to connect to %s: %s", address, error)
+            _LOGGER.warning(
+                "Unable to connect to Xiaomi BLE device %s during setup: %s",
+                address,
+                error,
+                exc_info=True,
+            )
             return None, "cannot_connect"
         return (
             (
