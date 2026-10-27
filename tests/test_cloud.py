@@ -383,6 +383,111 @@ async def test_device_token_lookup_uses_beaconkey_for_mesh_device() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_token_lookup_accepts_numeric_mesh_did() -> None:
+    client, _ = client_with_session()
+    client._serviceToken = "TOKEN"
+    client._ssecurity = base64.b64encode(b"security").decode()
+    client.userId = "123"
+    client.get_homes = AsyncMock(side_effect=[{"result": {"homelist": [{"id": 1}]}}] + [None] * 7)
+    client.get_dev_cnt = AsyncMock(return_value=None)
+    client.get_devices = AsyncMock(
+        side_effect=[
+            {
+                "result": {
+                    "device_info": [
+                        {
+                            "mac": ADDRESS,
+                            "did": "1096129305",
+                            "model": "soocare.magic_touch.m14",
+                            "pid": 16,
+                            "token": TOKEN,
+                        }
+                    ]
+                }
+            }
+        ]
+        + [{"result": {"device_info": []}}] * 7
+    )
+
+    assert await client.async_get_device_token(ADDRESS, model="soocare.magic_touch.m14") == TOKEN
+
+
+@pytest.mark.asyncio
+async def test_mesh_ltmk_lookup_returns_cloud_mesh_key() -> None:
+    client, _ = client_with_session()
+    client._serviceToken = "TOKEN"
+    client._ssecurity = base64.b64encode(b"security").decode()
+    client.userId = "123"
+    client.execute_api_call_encrypted = AsyncMock(return_value={"result": {"gatt_ltmk": "AB" * 32}})
+
+    assert await client.async_get_mesh_ltmk("1096129305") == "ab" * 32
+    client.execute_api_call_encrypted.assert_awaited_once()
+    request = client.execute_api_call_encrypted.await_args
+    assert request.args[0].endswith("/v2/blemesh/query_dev")
+    assert '"did":"1096129305"' in request.args[1]["data"]
+
+
+@pytest.mark.asyncio
+async def test_mesh_ltmk_lookup_rejects_invalid_cloud_key() -> None:
+    client, _ = client_with_session()
+    client._serviceToken = "TOKEN"
+    client._ssecurity = base64.b64encode(b"security").decode()
+    client.userId = "123"
+    client.execute_api_call_encrypted = AsyncMock(return_value={"result": {"gatt_ltmk": "bad"}})
+
+    with pytest.raises(XiaomiCloudDeviceTokenUnavailableError, match="Mesh local key"):
+        await client.async_get_mesh_ltmk("1096129305")
+
+
+@pytest.mark.asyncio
+async def test_mesh_device_lookup_matches_address_and_returns_ltmk() -> None:
+    client, _ = client_with_session()
+    client._serviceToken = "TOKEN"
+    client._ssecurity = base64.b64encode(b"security").decode()
+    client.userId = "123"
+    client.get_homes = AsyncMock(side_effect=[{"result": {"homelist": [{"id": 1}]}}] + [None] * 7)
+    client.get_dev_cnt = AsyncMock(return_value=None)
+    client.get_devices = AsyncMock(
+        side_effect=[
+            {"result": {"device_info": [{"mac": ADDRESS, "did": "mesh-1", "model": "wrong"}]}},
+        ]
+        + [{"result": {"device_info": []}}] * 7
+    )
+    client.async_get_mesh_ltmk = AsyncMock(return_value="ab" * 32)
+
+    assert await client.async_get_device_mesh_ltmk(ADDRESS, "soocare.magic_touch.m14") == "ab" * 32
+    client.async_get_mesh_ltmk.assert_awaited_once_with("mesh-1", "cn")
+
+
+@pytest.mark.asyncio
+async def test_mesh_device_lookup_uses_unique_model_and_skips_invalid_key() -> None:
+    client, _ = client_with_session()
+    client._serviceToken = "TOKEN"
+    client._ssecurity = base64.b64encode(b"security").decode()
+    client.userId = "123"
+    client.get_homes = AsyncMock(side_effect=[{"result": {"homelist": [{"id": 1}]}}] + [None] * 7)
+    client.get_dev_cnt = AsyncMock(return_value=None)
+    client.get_devices = AsyncMock(
+        side_effect=[
+            {
+                "result": {
+                    "device_info": [
+                        {"did": "mesh-2", "model": "soocare.magic_touch.m14"}
+                    ]
+                }
+            },
+        ]
+        + [{"result": {"device_info": []}}] * 7
+    )
+    client.async_get_mesh_ltmk = AsyncMock(
+        side_effect=XiaomiCloudDeviceTokenUnavailableError("bad key")
+    )
+
+    assert await client.async_get_device_mesh_ltmk(ADDRESS, "soocare.magic_touch.m14") is None
+    client.async_get_mesh_ltmk.assert_awaited_once_with("mesh-2", "cn")
+
+
+@pytest.mark.asyncio
 async def test_device_token_lookup_uses_unique_model_when_mac_is_not_returned() -> None:
     client, _ = client_with_session()
     client._serviceToken = "TOKEN"

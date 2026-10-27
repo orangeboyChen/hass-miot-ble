@@ -8,15 +8,24 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.miot_ble.const import UUID_AUTH, UUID_MIOT_NOTIFY, UUID_MIOT_WRITE, UUID_UPNP
-from custom_components.miot_ble.profiles import MUXNW_DRYER_M73
-from custom_components.miot_ble.protocol.crypto import SessionKeys
+from custom_components.miot_ble.const import (
+    UUID_AUTH,
+    UUID_MESH_CHANNEL,
+    UUID_MESH_LOGIN,
+    UUID_MIOT_NOTIFY,
+    UUID_MIOT_WRITE,
+    UUID_UPNP,
+)
+from custom_components.miot_ble.profiles import MUXNW_DRYER_M73, SOOCARE_MAGIC_TOUCH_M14
+from custom_components.miot_ble.protocol import miot_v2
+from custom_components.miot_ble.protocol.crypto import MeshSessionKeys, SessionKeys
 from custom_components.miot_ble.protocol.session import (
     ACK_DATA,
     AUTH_RESPONSE_INFO,
     AUTH_RESPONSE_KEY,
     CONFIRM_LOGIN,
     DENY_LOGIN,
+    MESH_CMD_LOGIN,
     RECEIVE_OK,
     RECEIVE_READY,
     AuthenticationError,
@@ -153,6 +162,120 @@ async def test_auth_login_accepts_direct_device_data() -> None:
     await session.login(open_property_session=False)
 
     assert [write[1] for write in client.writes].count(ACK_DATA) == 2
+
+
+@pytest.mark.asyncio
+async def test_mesh_login_uses_mesh_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    client = FakeClient()
+    session = MiotBleSession(client, bytes(32), SOOCARE_MAGIC_TOUCH_M14)
+    await session.start()
+    app_private_key = ec.derive_private_key(1, ec.SECP256R1())
+    device_private_key = ec.derive_private_key(2, ec.SECP256R1())
+    device_numbers = device_private_key.public_key().public_numbers()
+    device_public_key = device_numbers.x.to_bytes(32, "big") + device_numbers.y.to_bytes(32, "big")
+    monkeypatch.setattr(
+        "custom_components.miot_ble.protocol.session.ec.generate_private_key",
+        lambda curve: app_private_key,
+    )
+    monkeypatch.setattr(
+        "custom_components.miot_ble.protocol.session.asyncio.sleep", AsyncMock()
+    )
+    feed(session, UUID_MESH_CHANNEL, RECEIVE_READY)
+    feed(session, UUID_MESH_CHANNEL, bytes((0, 0, 2, 3)) + device_public_key)
+    feed(session, UUID_MESH_CHANNEL, RECEIVE_READY)
+    feed(session, UUID_MESH_LOGIN, b"\x51\x00\x00\x00")
+
+    await session.login(open_property_session=False)
+
+    writes = [(uuid, data) for uuid, data, _ in client.writes]
+    assert (UUID_MESH_LOGIN, MESH_CMD_LOGIN) in writes
+    assert (UUID_MESH_LOGIN, bytes.fromhex("24000000")) not in writes
+    assert session.authenticated
+    await session.async_close()
+
+
+@pytest.mark.asyncio
+async def test_mesh_open_and_read_properties() -> None:
+    session = MiotBleSession(FakeClient(), bytes(32), SOOCARE_MAGIC_TOUCH_M14)
+    session._transaction_id = 0xFFFF
+    sent: list[bytes] = []
+    session._send_request = AsyncMock(side_effect=lambda payload: sent.append(payload))
+    session._receive_encrypted = AsyncMock(
+        side_effect=[
+            bytes.fromhex("05200000f0"),
+            bytes.fromhex("0e2001000301030100000001102a"),
+        ]
+    )
+
+    await session.open_property_session()
+    values = await session.read_properties((SOOCARE_MAGIC_TOUCH_M14.property(3, 1),))
+
+    assert sent[0] == miot_v2.build_message(0, 0xF0)
+    assert values[(3, 1)].value == 42
+    assert session._receive_encrypted.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_mesh_receive_decrypts_and_acknowledges() -> None:
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    device = ec.generate_private_key(ec.SECP256R1()).public_key().public_numbers()
+    public_key = device.x.to_bytes(32, "big") + device.y.to_bytes(32, "big")
+    keys = MeshSessionKeys.from_private_key(
+        ec.derive_private_key(1, ec.SECP256R1()), public_key, bytes(32)
+    )
+    client = FakeClient()
+    session = MiotBleSession(client, bytes(32), SOOCARE_MAGIC_TOUCH_M14)
+    session._mesh_keys = keys
+    feed(
+        session,
+        UUID_MIOT_NOTIFY,
+        bytes.fromhex("000002000700") + keys.encrypt_from_device(7, b"payload"),
+    )
+
+    assert await session._receive_encrypted() == b"payload"
+    assert client.writes[-1][1] == ACK_DATA
+
+
+@pytest.mark.asyncio
+async def test_mesh_send_request_uses_one_fragment() -> None:
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    device = ec.generate_private_key(ec.SECP256R1()).public_key().public_numbers()
+    public_key = device.x.to_bytes(32, "big") + device.y.to_bytes(32, "big")
+    keys = MeshSessionKeys.from_private_key(
+        ec.derive_private_key(1, ec.SECP256R1()), public_key, bytes(32)
+    )
+    client = FakeClient()
+    session = MiotBleSession(client, bytes(32), SOOCARE_MAGIC_TOUCH_M14)
+    session._mesh_keys = keys
+    session._wait_data = AsyncMock()
+
+    await session._send_request(b"payload")
+
+    assert client.writes[0][1] == bytes.fromhex("000000000100")
+    assert client.writes[1][1] == b"\x01\x00" + keys.encrypt_from_app(0, b"payload")
+
+
+@pytest.mark.asyncio
+async def test_mesh_mng_loop_negotiates_mtu() -> None:
+    client = FakeClient()
+    session = MiotBleSession(client, bytes(32), SOOCARE_MAGIC_TOUCH_M14)
+    task = asyncio.create_task(session._mesh_mng_loop())
+    feed(session, UUID_MESH_CHANNEL, bytes.fromhex("0000040006f2"))
+    await asyncio.sleep(0)
+    feed(session, UUID_MESH_CHANNEL, bytes.fromhex("00000401") + bytes([0xF2]) * 240)
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert (UUID_MESH_CHANNEL, bytes.fromhex("0000050006f2")) in [
+        (uuid, data) for uuid, data, _ in client.writes
+    ]
+    assert client.writes[-1][1][:4] == bytes.fromhex("00000501")
 
 
 @pytest.mark.asyncio

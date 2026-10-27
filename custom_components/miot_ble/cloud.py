@@ -260,8 +260,6 @@ class XiaomiCloudClient(XiaomiCloudConnector):
                 device_info = ((devices or {}).get("result") or {}).get("device_info") or []
                 for device in device_info:
                     did = str(device.get("did") or "")
-                    if not did.startswith("blt."):
-                        continue
                     key = (server, did)
                     if key in seen:
                         continue
@@ -294,6 +292,75 @@ class XiaomiCloudClient(XiaomiCloudConnector):
             raise XiaomiCloudDeviceTokenUnavailableError(
                 "Xiaomi Cloud did not return a BLE key for the device"
             )
+        return None
+
+    async def async_get_mesh_ltmk(self, did: str, server: str = "cn") -> str:
+        """Return the 32-byte local Mesh key used by Xiaomi phone clients."""
+        if not self._serviceToken or not self._ssecurity or not self.userId:
+            raise XiaomiCloudSessionError("Xiaomi Cloud session is incomplete")
+        response = await self.execute_api_call_encrypted(
+            self.get_api_url(server) + "/v2/blemesh/query_dev",
+            {"data": json.dumps({"did": str(did)}, separators=(",", ":"))},
+        )
+        result = response.get("result") if isinstance(response, dict) else None
+        value = result.get("gatt_ltmk") if isinstance(result, dict) else None
+        if not isinstance(value, str) or len(value) != 64:
+            raise XiaomiCloudDeviceTokenUnavailableError(
+                "Xiaomi Cloud did not return a valid Mesh local key"
+            )
+        try:
+            bytes.fromhex(value)
+        except ValueError as error:
+            raise XiaomiCloudDeviceTokenUnavailableError(
+                "Xiaomi Cloud returned a malformed Mesh local key"
+            ) from error
+        return value.lower()
+
+    async def async_get_device_mesh_ltmk(self, mac: str, model: str) -> str | None:
+        """Find a bound BLE Mesh device and retrieve its local GATT key."""
+        if not self._serviceToken or not self._ssecurity or not self.userId:
+            raise XiaomiCloudSessionError("Xiaomi Cloud session is incomplete")
+        formatted_mac = format_mac_upper(mac)
+        exact_matches: list[tuple[str, dict[str, Any]]] = []
+        model_matches: list[tuple[str, dict[str, Any]]] = []
+        seen: set[tuple[str, str]] = set()
+        for server in SERVERS:
+            homes: dict[str, str] = {}
+            home_info = await self.get_homes(server)
+            for home in ((home_info or {}).get("result") or {}).get("homelist") or []:
+                if home_id := home.get("id"):
+                    homes[str(home_id)] = str(self.userId)
+            device_count = await self.get_dev_cnt(server)
+            shares = (((device_count or {}).get("result") or {}).get("share") or {}).get(
+                "share_family"
+            ) or []
+            for home in shares:
+                if home_id := home.get("home_id"):
+                    homes[str(home_id)] = str(home.get("home_owner") or self.userId)
+            for home_id, owner_id in homes.items():
+                devices = await self.get_devices(server, home_id, owner_id)
+                for device in ((devices or {}).get("result") or {}).get("device_info") or []:
+                    did = str(device.get("did") or "")
+                    if not did or (server, did) in seen:
+                        continue
+                    seen.add((server, did))
+                    if str(device.get("mac") or "") and format_mac_upper(
+                        str(device["mac"])
+                    ) == formatted_mac:
+                        exact_matches.append((server, device))
+                    elif str(device.get("model") or "").lower() == model.lower():
+                        model_matches.append((server, device))
+        candidates = exact_matches
+        unique_model_matches = {
+            (server, str(device["did"])) for server, device in model_matches
+        }
+        if not candidates and len(unique_model_matches) == 1:
+            candidates = model_matches
+        for server, device in candidates:
+            try:
+                return await self.async_get_mesh_ltmk(str(device["did"]), server)
+            except XiaomiCloudDeviceTokenUnavailableError:
+                continue
         return None
 
     def clear_sensitive_data(self) -> None:

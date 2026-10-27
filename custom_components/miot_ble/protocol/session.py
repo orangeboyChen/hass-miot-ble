@@ -11,14 +11,27 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import Any, Protocol
 
-from ..const import UUID_AUTH, UUID_MIOT_NOTIFY, UUID_MIOT_WRITE, UUID_UPNP
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
+from ..const import (
+    UUID_AUTH,
+    UUID_MESH_CHANNEL,
+    UUID_MESH_LOGIN,
+    UUID_MESH_MCU,
+    UUID_MIOT_NOTIFY,
+    UUID_MIOT_WRITE,
+    UUID_UPNP,
+)
 from ..profile import DeviceProfile, PropertySpec
-from .crypto import SessionKeys
+from . import miot_v2
+from .crypto import MeshSessionKeys, SessionKeys
 from .tlv import Operation, PropertyValue, build_set, build_subscribe, parse_properties
 
 _LOGGER = logging.getLogger(__name__)
 
 CMD_LOGIN = bytes.fromhex("24000000")
+MESH_CMD_LOGIN = bytes.fromhex("50000000")
 CONFIRM_LOGIN = bytes.fromhex("21000000")
 DENY_LOGIN = bytes.fromhex("23000000")
 RECEIVE_READY = bytes.fromhex("00000101")
@@ -132,11 +145,19 @@ class MiotBleSession:
         ] = {}
         self._receiver_task: asyncio.Task[None] | None = None
         self._receiver_error: Exception | None = None
+        self._mesh_keys: MeshSessionKeys | None = None
+        self._mesh_mng_task: asyncio.Task[None] | None = None
+        self._mesh_mtu = 242
+
+    @property
+    def _uses_mesh(self) -> bool:
+        """Return whether this profile uses Xiaomi's security-chip login."""
+        return self.profile.auth_type == 5
 
     @property
     def authenticated(self) -> bool:
         """Return whether Standard Auth completed successfully."""
-        return self._keys is not None
+        return (self._mesh_keys is not None) if self._uses_mesh else (self._keys is not None)
 
     @property
     def property_values(self) -> dict[tuple[int, int], PropertyValue]:
@@ -161,7 +182,18 @@ class MiotBleSession:
         """Subscribe to every characteristic used by the protocol."""
         if self._started:
             return
-        for uuid in (UUID_UPNP, UUID_AUTH, UUID_MIOT_WRITE, UUID_MIOT_NOTIFY):
+        characteristics = (
+            (
+                UUID_MESH_LOGIN,
+                UUID_MESH_CHANNEL,
+                UUID_MIOT_WRITE,
+                UUID_MIOT_NOTIFY,
+                UUID_MESH_MCU,
+            )
+            if self._uses_mesh
+            else (UUID_UPNP, UUID_AUTH, UUID_MIOT_WRITE, UUID_MIOT_NOTIFY)
+        )
+        for uuid in characteristics:
             await self._client.start_notify(uuid, self._on_notify)
         self._started = True
 
@@ -236,6 +268,9 @@ class MiotBleSession:
         """Authenticate with a device that was previously bound in Mi Home."""
         if not self._started:
             raise MiotBleError("Notification subscriptions must be started before login")
+        if self._uses_mesh:
+            await self._mesh_login(open_property_session=open_property_session)
+            return
         app_random = self._random_bytes(16)
         if len(app_random) != 16:
             raise ValueError("Random source must return exactly 16 bytes")
@@ -265,11 +300,122 @@ class MiotBleSession:
         if open_property_session:
             await self.open_property_session()
 
+    async def _mesh_mng_loop(self) -> None:
+        """Answer the security-chip MTU negotiation frames."""
+        try:
+            while True:
+                _, frame = await self._inbox.wait_for(
+                    lambda uuid, data: (
+                        uuid == UUID_MESH_CHANNEL
+                        and len(data) >= 4
+                        and data[:2] == bytes(2)
+                        and data[2] == 4
+                    ),
+                    3600,
+                )
+                packet_id = frame[3]
+                payload = frame[4:]
+                if packet_id == 0:
+                    device_mtu = payload[1] if len(payload) > 1 else 242
+                    self._mesh_mtu = min(self._mesh_mtu, device_mtu)
+                    await self._write(
+                        UUID_MESH_CHANNEL,
+                        bytes((0, 0, 5, 0, 6, self._mesh_mtu)),
+                    )
+                elif packet_id == 1:
+                    size = len(payload) + 2
+                    if size != self._mesh_mtu:
+                        size = 18
+                    self._mesh_mtu = size
+                    await self._write(
+                        UUID_MESH_CHANNEL,
+                        bytes((0, 0, 5, 1)) + bytes((size,)) * (size - 2),
+                    )
+        except asyncio.CancelledError:
+            raise
+
+    async def _mesh_send_auth(self, kind: int, payload: bytes) -> None:
+        """Send one security-chip authentication payload."""
+        chunk_size = max(1, self._mesh_mtu - 2)
+        parcels = tuple(
+            struct.pack("<H", index) + payload[offset : offset + chunk_size]
+            for index, offset in enumerate(range(0, len(payload), chunk_size), start=1)
+        )
+        await self._write(
+            UUID_MESH_CHANNEL,
+            bytes((0, 0, 0, kind)) + struct.pack("<H", len(parcels)),
+        )
+        await self._wait_data(UUID_MESH_CHANNEL, RECEIVE_READY)
+        for parcel in parcels:
+            await self._write(UUID_MESH_CHANNEL, parcel)
+
+    async def _mesh_receive_public_key(self) -> bytes:
+        """Receive and acknowledge the device's ECDH public key."""
+        _, frame = await self._inbox.wait_for(
+            lambda uuid, data: (
+                uuid == UUID_MESH_CHANNEL
+                and len(data) >= 68
+                and data[:4] == bytes((0, 0, 2, 3))
+            ),
+            self._timeout,
+        )
+        await self._write(UUID_MESH_CHANNEL, ACK_DATA)
+        public_key = frame[4:68]
+        if len(public_key) != 64:
+            raise AuthenticationError("Mesh device public key is truncated")
+        return public_key
+
+    async def _mesh_login(self, *, open_property_session: bool) -> None:
+        """Perform Xiaomi's ECDH/LTMK security-chip login."""
+        if len(self._token) != 32:
+            raise AuthenticationError("A Mesh device requires a 32-byte local key")
+        self._mesh_mng_task = asyncio.create_task(
+            self._mesh_mng_loop(), name="miot-ble-mesh-mng"
+        )
+        try:
+            for command in (b"\x00", b"\x08\x01\x00", b"\x03"):
+                await self._write(UUID_MESH_MCU, command)
+                await asyncio.sleep(0.25)
+            await self._write(UUID_MESH_LOGIN, b"\xa4")
+            await asyncio.sleep(2.2)
+            private_key = ec.generate_private_key(ec.SECP256R1())
+            public_key = private_key.public_key().public_bytes(
+                serialization.Encoding.X962,
+                serialization.PublicFormat.UncompressedPoint,
+            )[1:]
+            await self._write(UUID_MESH_LOGIN, MESH_CMD_LOGIN)
+            await self._mesh_send_auth(3, public_key)
+            device_public_key = await self._mesh_receive_public_key()
+            self._mesh_keys = MeshSessionKeys.from_private_key(
+                private_key, device_public_key, self._token
+            )
+            await self._mesh_send_auth(5, self._mesh_keys.login_proof(device_public_key))
+            _, confirmation = await self._inbox.wait_for(
+                lambda uuid, data: uuid == UUID_MESH_LOGIN and data[:1] in (b"\x51", b"\x52"),
+                self._timeout,
+            )
+            if confirmation[:1] != b"\x51":
+                raise AuthenticationError("Mesh device rejected login")
+            self._tx_counter = -1
+            if open_property_session:
+                await self.open_property_session()
+        except Exception:
+            self._mesh_keys = None
+            raise
+
     def _next_transaction_id(self) -> int:
-        self._transaction_id = (self._transaction_id + 1) & 0xFF
+        maximum = 0xFFFF if self._uses_mesh else 0xFF
+        self._transaction_id = (self._transaction_id + 1) & maximum
         return self._transaction_id
 
     def _encrypt(self, plaintext: bytes) -> bytes:
+        if self._uses_mesh:
+            if self._mesh_keys is None:
+                raise AuthenticationError("The BLE Mesh session is not authenticated")
+            self._tx_counter += 1
+            if self._tx_counter > 0xFFFF:
+                raise MiotBleError("The BLE Mesh transmit counter is exhausted")
+            return self._mesh_keys.encrypt_from_app(self._tx_counter, plaintext)
         if self._keys is None:
             raise AuthenticationError("The BLE session is not authenticated")
         self._tx_counter += 1
@@ -280,6 +426,11 @@ class MiotBleSession:
 
     async def _send_request(self, plaintext: bytes) -> None:
         payload = self._encrypt(plaintext)
+        if self._uses_mesh:
+            await self._write(UUID_MIOT_WRITE, bytes((0, 0, 0, 0, 1, 0)))
+            await self._wait_data(UUID_MIOT_WRITE, RECEIVE_READY)
+            await self._write(UUID_MIOT_WRITE, bytes((1, 0)) + payload)
+            return
         parcels = self._parcels(payload)
         await self._write(UUID_MIOT_WRITE, bytes(4) + struct.pack("<H", len(parcels)))
         await self._wait_data(UUID_MIOT_WRITE, RECEIVE_READY)
@@ -288,6 +439,20 @@ class MiotBleSession:
         await self._wait_data(UUID_MIOT_WRITE, RECEIVE_OK)
 
     async def _receive_encrypted(self, timeout: float | None = None) -> bytes:
+        if self._uses_mesh:
+            if self._mesh_keys is None:
+                raise AuthenticationError("The BLE Mesh session is not authenticated")
+            _, frame = await self._inbox.wait_for(
+                lambda uuid, data: (
+                    uuid == UUID_MIOT_NOTIFY
+                    and len(data) >= 10
+                    and data[:4] == bytes((0, 0, 2, 0))
+                ),
+                timeout or self._timeout,
+            )
+            await self._write(UUID_MIOT_NOTIFY, ACK_DATA)
+            counter = int.from_bytes(frame[4:6], "little")
+            return self._mesh_keys.decrypt_from_device(counter, frame[6:])
         if self._keys is None:
             raise AuthenticationError("The BLE session is not authenticated")
         _, frame = await self._inbox.wait_for(
@@ -328,6 +493,12 @@ class MiotBleSession:
     async def open_property_session(self) -> None:
         """Open the encrypted Miot property channel."""
         async with self._command_lock:
+            if self._uses_mesh:
+                transaction_id = self._next_transaction_id()
+                await self._send_request(miot_v2.build_message(transaction_id, 0xF0))
+                response = await self._receive_encrypted()
+                miot_v2.validate_transaction(response, transaction_id, 0xF0)
+                return
             payload = bytes((5, 0x20, self._next_transaction_id(), 0, Operation.OPEN))
             await self._send_request(payload)
             try:
@@ -349,12 +520,22 @@ class MiotBleSession:
             return {}
         result: dict[tuple[int, int], PropertyValue] = {}
         async with self._command_lock:
-            request = build_subscribe(self._next_transaction_id(), properties)
+            transaction_id = self._next_transaction_id()
+            request = (
+                miot_v2.build_get(transaction_id, properties)
+                if self._uses_mesh
+                else build_subscribe(transaction_id, properties)
+            )
             await self._send_request(request)
             while not expected.issubset(result):
                 response = await self._receive_encrypted()
                 try:
-                    values = parse_properties(response)
+                    if self._uses_mesh:
+                        response_id, values = miot_v2.parse_properties(response)
+                        if response_id != transaction_id:
+                            continue
+                    else:
+                        values = parse_properties(response)
                 except ValueError as error:
                     _LOGGER.debug(
                         "Ignoring Miot payload while waiting for initial properties: %s (%s)",
@@ -405,7 +586,42 @@ class MiotBleSession:
                 except ResponseTimeoutError:
                     continue
                 try:
-                    values = parse_properties(payload)
+                    if self._uses_mesh:
+                        if len(payload) >= 5 and payload[4] == 1:
+                            transaction_id, results = miot_v2.parse_set_response(payload)
+                            for siid, piid, status in results:
+                                pending_response = self._pending_responses.get(transaction_id)
+                                if (
+                                    pending_response is not None
+                                    and pending_response[0] == (siid, piid)
+                                    and not pending_response[2].done()
+                                ):
+                                    if status:
+                                        pending_response[2].set_exception(
+                                            MiotBleError(
+                                                f"Device rejected property write: {status}"
+                                            )
+                                        )
+                                    else:
+                                        expected_spec = self.profile.property(siid, piid)
+                                        expected_value = pending_response[1]
+                                        pending_response[2].set_result(
+                                            PropertyValue(
+                                                siid,
+                                                piid,
+                                                expected_spec.value_type,
+                                                bool(expected_value)
+                                                if expected_spec.value_type.name == "BOOL"
+                                                else expected_value,
+                                            )
+                                        )
+                            continue
+                        try:
+                            _, values = miot_v2.parse_properties(payload)
+                        except ValueError:
+                            continue
+                    else:
+                        values = parse_properties(payload)
                 except ValueError:
                     _LOGGER.debug(
                         "Ignoring Xiaomi BLE payload without property values: %s",
@@ -437,6 +653,9 @@ class MiotBleSession:
 
     def cancel_background_tasks(self) -> asyncio.Task[None] | None:
         """Cancel notification processing and fail outstanding commands."""
+        if self._mesh_mng_task is not None:
+            self._mesh_mng_task.cancel()
+            self._mesh_mng_task = None
         task = self._receiver_task
         self._receiver_task = None
         self._property_callback = None
@@ -450,6 +669,12 @@ class MiotBleSession:
 
     async def async_close(self) -> None:
         """Stop background notification processing."""
+        mesh_task = self._mesh_mng_task
+        self._mesh_mng_task = None
+        if mesh_task is not None:
+            mesh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await mesh_task
         task = self.cancel_background_tasks()
         if task is not None:
             with suppress(asyncio.CancelledError):
@@ -461,7 +686,11 @@ class MiotBleSession:
             self.raise_if_receiver_failed()
             transaction_id = self._next_transaction_id()
             normalized_value = prop.validate_value(value)
-            request = build_set(transaction_id, prop, value)
+            request = (
+                miot_v2.build_set(transaction_id, prop, value)
+                if self._uses_mesh
+                else build_set(transaction_id, prop, value)
+            )
             if self._receiver_task is not None:
                 pending = asyncio.get_running_loop().create_future()
                 self._pending_responses[transaction_id] = (

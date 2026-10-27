@@ -69,6 +69,15 @@ def normalize_token(value: str) -> str:
     return token
 
 
+def normalize_device_key(value: str, model: str) -> str:
+    """Validate the local key format required by the selected device profile."""
+    key = value.strip().lower()
+    expected_length = 64 if get_profile(model).auth_type == 5 else 24
+    if len(key) != expected_length or not re.fullmatch(r"[0-9a-f]+", key):
+        raise ValueError("The Xiaomi Cloud key has an invalid format for this device")
+    return key
+
+
 def _profile_for_discovery(info: BluetoothServiceInfoBleak) -> DeviceProfile | None:
     """Return a profile only for a supported Xiaomi Bluetooth advertisement."""
     service_data = info.service_data.get(UUID_MI_SERVICE)
@@ -144,7 +153,7 @@ async def async_fetch_cloud_token(
     model: str | None = None,
     cloud_address: str | None = None,
 ) -> str:
-    """Fetch and validate a BLE key using an authenticated cloud client."""
+    """Fetch and validate the local BLE key using an authenticated cloud client."""
     from xiaomi_ble import (
         XiaomiCloudException,
         XiaomiCloudInvalidAuthenticationException,
@@ -152,7 +161,9 @@ async def async_fetch_cloud_token(
 
     try:
         lookup_address = cloud_address or address
-        if model is None:
+        if model is not None and get_profile(model).auth_type == 5:
+            token = await client.async_get_device_mesh_ltmk(lookup_address, model)
+        elif model is None:
             token = await client.async_get_device_token(lookup_address)
         else:
             token = await client.async_get_device_token(lookup_address, model=model)
@@ -162,7 +173,9 @@ async def async_fetch_cloud_token(
         raise XiaomiCloudError("Unable to query Xiaomi Cloud") from error
     if token is None:
         raise CloudDeviceNotFoundError
-    return normalize_token(token)
+    if model is None:
+        return normalize_token(token)
+    return normalize_device_key(token, model)
 
 
 class MiotBleConfigFlow(ConfigFlow, domain=DOMAIN):
