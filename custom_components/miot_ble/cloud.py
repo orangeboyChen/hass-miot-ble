@@ -344,16 +344,15 @@ class XiaomiCloudClient(XiaomiCloudConnector):
                     if not did or (server, did) in seen:
                         continue
                     seen.add((server, did))
-                    if str(device.get("mac") or "") and format_mac_upper(
-                        str(device["mac"])
-                    ) == formatted_mac:
+                    if (
+                        str(device.get("mac") or "")
+                        and format_mac_upper(str(device["mac"])) == formatted_mac
+                    ):
                         exact_matches.append((server, device))
                     elif str(device.get("model") or "").lower() == model.lower():
                         model_matches.append((server, device))
         candidates = exact_matches
-        unique_model_matches = {
-            (server, str(device["did"])) for server, device in model_matches
-        }
+        unique_model_matches = {(server, str(device["did"])) for server, device in model_matches}
         if not candidates and len(unique_model_matches) == 1:
             candidates = model_matches
         for server, device in candidates:

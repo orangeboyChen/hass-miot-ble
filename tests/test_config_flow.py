@@ -755,7 +755,7 @@ async def test_validate_connection() -> None:
         await async_validate_connection(MagicMock(), ADDRESS, bytes.fromhex(TOKEN), MODEL)
 
     client = SimpleNamespace(is_connected=True, disconnect=AsyncMock())
-    session = SimpleNamespace(start=AsyncMock(), login=AsyncMock())
+    session = SimpleNamespace(start=AsyncMock(), login=AsyncMock(), async_close=AsyncMock())
     with (
         patch(
             "custom_components.miot_ble.config_flow.async_ble_device_from_address",
@@ -773,4 +773,34 @@ async def test_validate_connection() -> None:
         await async_validate_connection(MagicMock(), ADDRESS, bytes.fromhex(TOKEN), MODEL)
     session.start.assert_awaited_once()
     session.login.assert_awaited_once()
+    session.async_close.assert_awaited_once()
+    client.disconnect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_validate_connection_closes_session_when_login_fails() -> None:
+    client = SimpleNamespace(is_connected=True, disconnect=AsyncMock())
+    session = SimpleNamespace(
+        start=AsyncMock(),
+        login=AsyncMock(side_effect=RuntimeError("login failed")),
+        async_close=AsyncMock(),
+    )
+    with (
+        patch(
+            "custom_components.miot_ble.config_flow.async_ble_device_from_address",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "custom_components.miot_ble.config_flow.establish_connection",
+            new=AsyncMock(return_value=client),
+        ),
+        patch(
+            "custom_components.miot_ble.config_flow.MiotBleSession",
+            return_value=session,
+        ),
+        pytest.raises(RuntimeError, match="login failed"),
+    ):
+        await async_validate_connection(MagicMock(), ADDRESS, bytes.fromhex(TOKEN), MODEL)
+
+    session.async_close.assert_awaited_once()
     client.disconnect.assert_awaited_once()

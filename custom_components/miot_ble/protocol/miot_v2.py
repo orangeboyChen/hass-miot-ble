@@ -26,9 +26,12 @@ def build_message(transaction_id: int, opcode: int, body: bytes = b"") -> bytes:
         raise ValueError("Transaction ID must fit in an unsigned 16-bit integer")
     if length > 0x0FFF:
         raise ValueError("MIoT Spec-v2 packet is too large")
-    return (0x2000 | length).to_bytes(2, "little") + transaction_id.to_bytes(
-        2, "little"
-    ) + bytes((opcode,)) + body
+    return (
+        (0x2000 | length).to_bytes(2, "little")
+        + transaction_id.to_bytes(2, "little")
+        + bytes((opcode,))
+        + body
+    )
 
 
 def build_get(transaction_id: int, properties: tuple[PropertySpec, ...]) -> bytes:

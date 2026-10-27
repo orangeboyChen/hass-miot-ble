@@ -469,13 +469,7 @@ async def test_mesh_device_lookup_uses_unique_model_and_skips_invalid_key() -> N
     client.get_dev_cnt = AsyncMock(return_value=None)
     client.get_devices = AsyncMock(
         side_effect=[
-            {
-                "result": {
-                    "device_info": [
-                        {"did": "mesh-2", "model": "soocare.magic_touch.m14"}
-                    ]
-                }
-            },
+            {"result": {"device_info": [{"did": "mesh-2", "model": "soocare.magic_touch.m14"}]}},
         ]
         + [{"result": {"device_info": []}}] * 7
     )

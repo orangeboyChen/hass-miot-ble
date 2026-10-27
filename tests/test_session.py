@@ -46,6 +46,7 @@ class FakeClient:
     def __init__(self) -> None:
         self.subscriptions: list[str] = []
         self.writes: list[tuple[str, bytes, bool]] = []
+        self.write_error: Exception | None = None
 
     async def start_notify(self, char_specifier: str, callback) -> None:
         self.subscriptions.append(char_specifier)
@@ -53,6 +54,8 @@ class FakeClient:
     async def write_gatt_char(
         self, char_specifier: str, data: bytes, response: bool = False
     ) -> None:
+        if self.write_error is not None:
+            raise self.write_error
         self.writes.append((char_specifier, bytes(data), response))
 
 
@@ -179,9 +182,7 @@ async def test_mesh_login_uses_mesh_command(monkeypatch: pytest.MonkeyPatch) -> 
         "custom_components.miot_ble.protocol.session.ec.generate_private_key",
         lambda curve: app_private_key,
     )
-    monkeypatch.setattr(
-        "custom_components.miot_ble.protocol.session.asyncio.sleep", AsyncMock()
-    )
+    monkeypatch.setattr("custom_components.miot_ble.protocol.session.asyncio.sleep", AsyncMock())
     feed(session, UUID_MESH_CHANNEL, RECEIVE_READY)
     feed(session, UUID_MESH_CHANNEL, bytes((0, 0, 2, 3)) + device_public_key)
     feed(session, UUID_MESH_CHANNEL, RECEIVE_READY)
@@ -276,6 +277,21 @@ async def test_mesh_mng_loop_negotiates_mtu() -> None:
         (uuid, data) for uuid, data, _ in client.writes
     ]
     assert client.writes[-1][1][:4] == bytes.fromhex("00000501")
+
+
+@pytest.mark.asyncio
+async def test_mesh_mng_loop_records_failures_and_protocol_reports_them(caplog) -> None:
+    client = FakeClient()
+    client.write_error = RuntimeError("write failed")
+    session = MiotBleSession(client, bytes(32), SOOCARE_MAGIC_TOUCH_M14)
+    session._mesh_mng_task = asyncio.create_task(session._mesh_mng_loop())
+    feed(session, UUID_MESH_CHANNEL, bytes.fromhex("0000040006f2"))
+    await session._mesh_mng_task
+
+    assert "Mesh management task stopped: write failed" in caplog.text
+    with pytest.raises(MiotBleError, match="management task stopped"):
+        await session._receive_encrypted(timeout=0.01)
+    await session.async_close()
 
 
 @pytest.mark.asyncio

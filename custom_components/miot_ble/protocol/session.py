@@ -147,6 +147,7 @@ class MiotBleSession:
         self._receiver_error: Exception | None = None
         self._mesh_keys: MeshSessionKeys | None = None
         self._mesh_mng_task: asyncio.Task[None] | None = None
+        self._mesh_mng_error: Exception | None = None
         self._mesh_mtu = 242
 
     @property
@@ -202,10 +203,16 @@ class MiotBleSession:
         await self._client.write_gatt_char(uuid, data, response=False)
 
     async def _wait_data(self, uuid: str, expected: bytes) -> None:
+        self._raise_if_mesh_mng_failed()
         await self._inbox.wait_for(
             lambda received_uuid, data: received_uuid == uuid and data == expected,
             self._timeout,
         )
+
+    def _raise_if_mesh_mng_failed(self) -> None:
+        """Fail protocol operations when Mesh MTU handling stopped unexpectedly."""
+        if self._mesh_mng_error is not None:
+            raise MiotBleError("BLE Mesh management task stopped") from self._mesh_mng_error
 
     @staticmethod
     def _parcels(payload: bytes, chunk_size: int = AUTH_CHUNK_SIZE) -> tuple[bytes, ...]:
@@ -333,6 +340,9 @@ class MiotBleSession:
                     )
         except asyncio.CancelledError:
             raise
+        except Exception as error:
+            self._mesh_mng_error = error
+            _LOGGER.warning("Xiaomi BLE Mesh management task stopped: %s", error, exc_info=True)
 
     async def _mesh_send_auth(self, kind: int, payload: bytes) -> None:
         """Send one security-chip authentication payload."""
@@ -353,9 +363,7 @@ class MiotBleSession:
         """Receive and acknowledge the device's ECDH public key."""
         _, frame = await self._inbox.wait_for(
             lambda uuid, data: (
-                uuid == UUID_MESH_CHANNEL
-                and len(data) >= 68
-                and data[:4] == bytes((0, 0, 2, 3))
+                uuid == UUID_MESH_CHANNEL and len(data) >= 68 and data[:4] == bytes((0, 0, 2, 3))
             ),
             self._timeout,
         )
@@ -369,9 +377,8 @@ class MiotBleSession:
         """Perform Xiaomi's ECDH/LTMK security-chip login."""
         if len(self._token) != 32:
             raise AuthenticationError("A Mesh device requires a 32-byte local key")
-        self._mesh_mng_task = asyncio.create_task(
-            self._mesh_mng_loop(), name="miot-ble-mesh-mng"
-        )
+        self._mesh_mng_error = None
+        self._mesh_mng_task = asyncio.create_task(self._mesh_mng_loop(), name="miot-ble-mesh-mng")
         try:
             for command in (b"\x00", b"\x08\x01\x00", b"\x03"):
                 await self._write(UUID_MESH_MCU, command)
@@ -401,6 +408,12 @@ class MiotBleSession:
                 await self.open_property_session()
         except Exception:
             self._mesh_keys = None
+            mesh_task = self._mesh_mng_task
+            self._mesh_mng_task = None
+            if mesh_task is not None:
+                mesh_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await mesh_task
             raise
 
     def _next_transaction_id(self) -> int:
@@ -439,14 +452,13 @@ class MiotBleSession:
         await self._wait_data(UUID_MIOT_WRITE, RECEIVE_OK)
 
     async def _receive_encrypted(self, timeout: float | None = None) -> bytes:
+        self._raise_if_mesh_mng_failed()
         if self._uses_mesh:
             if self._mesh_keys is None:
                 raise AuthenticationError("The BLE Mesh session is not authenticated")
             _, frame = await self._inbox.wait_for(
                 lambda uuid, data: (
-                    uuid == UUID_MIOT_NOTIFY
-                    and len(data) >= 10
-                    and data[:4] == bytes((0, 0, 2, 0))
+                    uuid == UUID_MIOT_NOTIFY and len(data) >= 10 and data[:4] == bytes((0, 0, 2, 0))
                 ),
                 timeout or self._timeout,
             )
@@ -656,6 +668,7 @@ class MiotBleSession:
         if self._mesh_mng_task is not None:
             self._mesh_mng_task.cancel()
             self._mesh_mng_task = None
+        self._mesh_mng_error = None
         task = self._receiver_task
         self._receiver_task = None
         self._property_callback = None

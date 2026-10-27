@@ -137,12 +137,15 @@ async def async_validate_connection(
     if ble_device is None:
         raise ConnectionError(f"Bluetooth device {address} is not currently available")
     client: BleakClient | None = None
+    session: MiotBleSession | None = None
     try:
         client = await establish_connection(BleakClient, ble_device, address)
         session = MiotBleSession(client, token, get_profile(model))
         await session.start()
         await session.login()
     finally:
+        if session is not None:
+            await session.async_close()
         if client is not None and client.is_connected:
             await client.disconnect()
 
